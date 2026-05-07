@@ -1,0 +1,15 @@
+{
+    "id": "vscode",
+    "name": "VS Code Plugin",
+    "version": "1.0.0",
+    "author": "Nova Assistant",
+    "description": "Launches Visual Studio Code and can open the current working folder when requested.",
+    "entry_point": "plugin.py",
+    "min_app_version": "0.1.0",
+    "permissions_requested": [
+        "filesystem",
+        "automation"
+    ],
+    "enabled_by_default": false,
+    "category": "developer_tools"
+}
