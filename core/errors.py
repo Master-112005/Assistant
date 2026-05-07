@@ -104,23 +104,6 @@ class PermissionErrorCustom(PermissionDeniedError):
         super().__init__(message=message, code="permission_denied", context=context or {}, recoverable=recoverable)
 
 
-class LLMError(AssistantError):
-    def __init__(self, message: str, *, context: dict[str, Any] | None = None, recoverable: bool = True) -> None:
-        super().__init__(message=message, code="llm_error", context=context or {}, recoverable=recoverable)
-
-
-class LLMUnavailableError(LLMError):
-    def __init__(self, message: str, *, context: dict[str, Any] | None = None) -> None:
-        super().__init__(message=message, context=context or {}, recoverable=True)
-        self.code = "llm_unavailable"
-
-
-class LLMResponseError(LLMError):
-    def __init__(self, message: str, *, context: dict[str, Any] | None = None) -> None:
-        super().__init__(message=message, context=context or {}, recoverable=True)
-        self.code = "llm_response_error"
-
-
 def ensure_assistant_error(error: Exception | dict[str, Any] | str, *, context: dict[str, Any] | None = None) -> AssistantError:
     """Normalize arbitrary failure payloads into an AssistantError."""
     if isinstance(error, AssistantError):

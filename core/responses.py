@@ -30,10 +30,6 @@ def error_response() -> str:
     return "Something went wrong while processing your command."
 
 
-def llm_unavailable_response() -> str:
-    """Returns an honest fallback when the local model cannot be used."""
-    return "Local AI model unavailable. Using standard command mode."
-
 def time_response() -> str:
     """Returns the current local time."""
     now_str = datetime.now().strftime("%I:%M %p")

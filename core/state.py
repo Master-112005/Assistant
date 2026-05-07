@@ -8,7 +8,7 @@ Track runtime state.
 is_listening: bool = False
 voice_state: str = "idle"
 
-# True if assistant is currently processing data (e.g. STT, LLM)
+# True if assistant is currently processing data (e.g. STT)
 is_processing: bool = False
 
 # Explicit state machine states (Section 16 of spec)
@@ -55,13 +55,6 @@ last_launched_app: str = ""
 last_launch_success: bool = False
 app_index_count: int = 0
 last_launch_pid: int = -1
-
-# LLM runtime state
-llm_ready: bool = False
-last_llm_model: str = ""
-last_llm_latency: float = 0.0
-last_llm_task: str = ""
-last_llm_output: str = ""
 
 # STT correction runtime state
 last_raw_transcript: str = ""

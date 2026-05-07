@@ -136,12 +136,6 @@ def fallback_input_mode() -> dict[str, Any]:
 def reduced_capability_mode(feature: str = "") -> dict[str, Any]:
     """Describe a graceful-degradation mode for an unavailable subsystem."""
     normalized = str(feature or "").strip().lower()
-    if normalized == "llm":
-        return {
-            "feature": "llm",
-            "mode": "rules_only",
-            "message": "Advanced language features are unavailable. Rule-based commands still work.",
-        }
     if normalized in {"ocr", "screen"}:
         return {
             "feature": normalized or "ocr",

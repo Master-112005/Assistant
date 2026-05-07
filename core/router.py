@@ -7,7 +7,6 @@ HARD PRIORITY HIERARCHY (enforced strictly):
 3. Explicit skill commands (WhatsApp, YouTube, Spotify)
 4. Context-based commands
 5. Search commands
-6. LLM fallback
 
 CRITICAL: App commands (open X, close X, etc.) MUST route to "launcher"
 and MUST NOT be intercepted by browser/search skills.

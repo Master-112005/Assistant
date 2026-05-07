@@ -1,5 +1,5 @@
 """
-Reusable prompt builders for the local LLM layer.
+Reusable prompt templates for the assistant.
 """
 from __future__ import annotations
 

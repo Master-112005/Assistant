@@ -1,5 +1,8 @@
 """
-Hybrid desktop-intent detection for Nova Assistant.
+Rule-based desktop-intent detection for Nova Assistant.
+
+Uses pattern matching, fuzzy matching, and context resolution to detect user intents.
+No external AI/LLM required - all processing done locally using deterministic algorithms.
 """
 from __future__ import annotations
 
@@ -114,10 +117,10 @@ class IntentResult:
 
 
 class IntentDetector:
-    """Rules-first desktop intent detector with optional LLM fallback."""
+    """Rules-first desktop intent detector."""
 
-    def __init__(self, llm_client=None) -> None:
-        self._llm = llm_client
+    def __init__(self) -> None:
+        pass
 
     def detect(
         self,
@@ -180,10 +183,6 @@ class IntentDetector:
                 entities=result.entities,
             )
             return result
-
-        llm_result = self._llm_fallback(original_text, normalized)
-        if llm_result is not None:
-            return llm_result
 
         return self._unknown(original_text, normalized, "no_rule_match")
 
@@ -331,6 +330,54 @@ class IntentDetector:
         if media_intent is not None:
             return media_intent
 
+        # Screenshot and system commands (before file_intent to avoid false positives)
+        if re.match(r"^(take\s+)?(a\s+)?screenshot|capture\s+screen|screen\s+capture", lowered):
+            return IntentType.SYSTEM_CONTROL, 0.90, ["rule:screenshot"]
+        
+        # Calculator commands
+        if re.match(r"^(calc|calculator|compute|calculate)\s+", lowered):
+            return IntentType.OPEN_APP, 0.95, ["rule:calculator"]
+        
+        # Settings commands
+        if lowered in {"open settings", "open preferences", "open config", "settings", "preferences"}:
+            return IntentType.OPEN_APP, 0.95, ["rule:settings"]
+        
+        # Weather query
+        if re.match(r"^(what'?s?\s+)?(the\s+)?(current\s+)?weather((\s+in|\s+at)\s+\w+)?$", lowered):
+            return IntentType.SEARCH_WEB, 0.92, ["rule:weather_query"]
+        
+        # News query
+        if re.match(r"(latest\s+)?news|news\s+((today|latest|breaking))", lowered):
+            return IntentType.SEARCH_WEB, 0.90, ["rule:news_query"]
+        
+        # Time query  
+        if lowered in {"what time is it", "tell me the time", "current time", "time now", "what's the time"}:
+            return IntentType.QUESTION, 0.95, ["rule:time_query"]
+        
+        # Date query
+        if lowered in {"what date is it", "what day is it", "today's date", "current date"}:
+            return IntentType.QUESTION, 0.95, ["rule:date_query"]
+        
+        # Print command
+        if lowered.startswith("print "):
+            return IntentType.SYSTEM_CONTROL, 0.90, ["rule:print"]
+        
+        # Email commands
+        if re.match(r"(check\s+)?(my\s+)?(email|inbox)|open\s+email", lowered):
+            return IntentType.OPEN_APP, 0.92, ["rule:email"]
+        
+        # VPN commands
+        if re.match(r"(connect|disconnect|toggle)\s+vpn", lowered):
+            return IntentType.SYSTEM_CONTROL, 0.92, ["rule:vpn"]
+        
+        # Night mode / dark mode
+        if re.match(r"(turn\s+)?(on|enable|switch\s+to)\s+(dark\s+mode|night\s+mode)", lowered):
+            return IntentType.SYSTEM_CONTROL, 0.90, ["rule:dark_mode"]
+        
+        # Airplane mode
+        if re.match(r"(turn\s+)?(on|off)\s+airplane\s+mode", lowered):
+            return IntentType.SYSTEM_CONTROL, 0.95, ["rule:airplane_mode"]
+
         file_intent = self._match_file_intent(lowered)
         if file_intent is not None:
             return file_intent
@@ -343,6 +390,34 @@ class IntentDetector:
             return IntentType.HELP, 0.98, ["rule:help"]
         if re.match(r"^(?:what|who|where|why|when|how)\b", lowered):
             return IntentType.QUESTION, 0.88, ["rule:question"]
+
+        # Calculator commands
+        if re.match(r"^(calc|calculator|compute|calculate)\s+", lowered):
+            return IntentType.OPEN_APP, 0.95, ["rule:calculator"]
+        
+        # Settings commands
+        if lowered in {"open settings", "open preferences", "open config", "settings", "preferences"}:
+            return IntentType.OPEN_APP, 0.95, ["rule:settings"]
+        
+        # Weather query
+        if re.match(r"^(what'?s?\s+)?(the\s+)?(current\s+)?weather((\s+in|\s+at)\s+\w+)?$", lowered):
+            return IntentType.SEARCH_WEB, 0.92, ["rule:weather_query"]
+        
+        # News query
+        if re.match(r"(latest\s+)?news|news\s+((today|latest|breaking))", lowered):
+            return IntentType.SEARCH_WEB, 0.90, ["rule:news_query"]
+        
+        # Time query  
+        if lowered in {"what time is it", "tell me the time", "current time", "time now", "what's the time"}:
+            return IntentType.QUESTION, 0.95, ["rule:time_query"]
+        
+        # Date query
+        if lowered in {"what date is it", "what day is it", "today's date", "current date"}:
+            return IntentType.QUESTION, 0.95, ["rule:date_query"]
+        
+        # Screenshot save location
+        if re.match(r"where\s+(is\s+)?(screenshot|screen\s+capture)", lowered):
+            return IntentType.SEARCH_FILE, 0.85, ["rule:screenshot_location"]
 
         return None
 
@@ -853,46 +928,6 @@ class IntentDetector:
             entities={"segments": segments, "connector_count": len(connectors)},
             matched_rules=["rule:multi_action"],
         )
-
-    def _llm_fallback(self, original_text: str, normalized_text: str) -> IntentResult | None:
-        if self._llm is None:
-            return None
-        if self._is_low_information_unknown(normalized_text):
-            return None
-        if not hasattr(self._llm, "is_available") or not self._llm.is_available():
-            return None
-        if not hasattr(self._llm, "extract_intent"):
-            return None
-
-        try:
-            llm_result = self._llm.extract_intent(normalized_text)
-        except Exception as exc:  # pragma: no cover - defensive integration
-            logger.warning("LLM intent fallback failed: %s", exc)
-            return None
-        if llm_result is None:
-            return None
-
-        intent_name = str(getattr(llm_result, "intent", "") or "").strip().lower()
-        enum_value = self._intent_from_name(intent_name)
-        if enum_value is None:
-            return None
-        entities = extract_entities(enum_value.value, normalized_text)
-        return IntentResult(
-            intent=enum_value,
-            confidence=max(0.0, min(1.0, float(getattr(llm_result, "confidence", 0.55) or 0.55))),
-            cleaned_text=normalized_text,
-            original_text=original_text,
-            entities=entities,
-            matched_rules=["llm:fallback"],
-        )
-
-    def _intent_from_name(self, name: str) -> IntentType | None:
-        for intent in IntentType:
-            if intent.value == name:
-                return intent
-        if name == "search":
-            return IntentType.SEARCH_WEB
-        return None
 
     @staticmethod
     def _should_prefer_browser_command(text: str, browser_command) -> bool:

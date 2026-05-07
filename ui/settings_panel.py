@@ -470,13 +470,11 @@ class SettingsPanel(QDialog):
         self.analytics_enabled_cb = QCheckBox("Enable local analytics")
         self.plugins_enabled_cb = QCheckBox("Enable plugins")
         self.plugins_auto_load_cb = QCheckBox("Auto-load plugins at startup")
-        self.llm_enabled_cb = QCheckBox("Enable local LLM pipeline")
         for widget in (
             self.logging_enabled_cb,
             self.analytics_enabled_cb,
             self.plugins_enabled_cb,
             self.plugins_auto_load_cb,
-            self.llm_enabled_cb,
         ):
             group_layout.addWidget(widget)
         layout.addWidget(group)

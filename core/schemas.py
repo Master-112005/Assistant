@@ -1,5 +1,5 @@
 """
-Structured output schemas for the local LLM layer.
+Structured output schemas for the assistant.
 """
 from __future__ import annotations
 

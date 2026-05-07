@@ -1,12 +1,11 @@
 """
-Production-grade STT correction engine with 6-layer hybrid pipeline.
+Production-grade STT correction engine with 5-layer rule-based pipeline.
 
 Layer 1: Text normalization
 Layer 2: Dictionary/alias corrections
 Layer 3: Vocabulary boosting
-Layer 4: LLM semantic correction
-Layer 5: Validation
-Layer 6: Safe fallback
+Layer 4: Validation
+Layer 5: Safe fallback
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ except ImportError:  # pragma: no cover - exercised in minimal environments
     fuzz = _FallbackFuzz()
 
 from core.logger import get_logger
-from core.llm import LLMClient
+
 from core.normalizer import normalize_command_result
 from core.paths import DATA_DIR
 from core.validator import CorrectionValidator, ValidationResult
@@ -73,27 +72,23 @@ class CorrectionResult:
 
 
 class STTCorrector:
-    """Hybrid STT correction engine."""
+    """Rule-based STT correction engine."""
 
     def __init__(
         self,
-        llm_client: LLMClient | None = None,
-        enable_llm: bool = True,
         confidence_threshold: float = DEFAULT_CORRECTION_CONFIDENCE_THRESHOLD,
     ) -> None:
-        self.llm = llm_client
-        self.enable_llm = enable_llm and (llm_client is not None)
         self.confidence_threshold = confidence_threshold
         self.vocab = get_vocabulary()
         self.validator = CorrectionValidator()
         self._cache: dict[str, dict[str, Any]] = {}
         self._cache_lock = RLock()
         self._load_cache()
-        logger.info("STTCorrector initialized (LLM: %s)", "enabled" if self.enable_llm else "disabled")
+        logger.info("STTCorrector initialized")
 
     def correct(self, text: str) -> CorrectionResult:
         """
-        Main entry point: correct noisy STT output through 6-layer pipeline.
+        Main entry point: correct noisy STT output through 5-layer pipeline.
 
         Returns:
             CorrectionResult with corrected text and metadata
@@ -134,26 +129,15 @@ class STTCorrector:
         # Combine confidence from layers 2-3
         combined_confidence = max(dict_confidence, vocab_confidence)
 
-        # Layer 4: LLM semantic correction (if enabled and needed)
-        llm_result = None
-        if self.enable_llm and self.llm and self.llm.is_available():
-            prefers_direct_llm = hasattr(self.llm, "correct_stt")
-            if prefers_direct_llm or combined_confidence < 0.9 or self._should_use_llm(text, original):
-                llm_result = self.semantic_correct(text)
-                if llm_result:
-                    text = llm_result.corrected_text
-                    combined_confidence = llm_result.confidence
-                    logger.debug("After LLM: '%s' (conf: %.2f)", text, combined_confidence)
-
-        # Layer 5: Validate
+        # Layer 4: Validate
         validation = self.validator.validate(original, text, combined_confidence)
         safe_to_apply = validation.is_safe
         logger.info("Validation: %s", validation)
 
-        # Layer 6: Safe fallback
+        # Layer 5: Safe fallback
         final_text = text if safe_to_apply else original
         final_confidence = combined_confidence if safe_to_apply else 0.0
-        method = llm_result.method_used if llm_result else "hybrid"
+        method = "rules"
 
         result = CorrectionResult(
             original_text=original,
@@ -310,50 +294,9 @@ class STTCorrector:
 
         return corrected, confidence, corrections_made
 
-    def semantic_correct(self, text: str) -> CorrectionResult | None:
-        """
-        Layer 4: LLM semantic correction for complex cases.
-        Uses local LLM to understand context and fix mistakes intelligently.
-
-        Returns:
-            CorrectionResult or None if LLM unavailable
-        """
-        if not self.llm or not self.llm.is_available():
-            return None
-
-        try:
-            from core.prompts import build_stt_correction_prompt
-            from core.schemas import CorrectedCommand
-
-            if hasattr(self.llm, "correct_stt"):
-                result = self.llm.correct_stt(text)
-            else:
-                prompt = build_stt_correction_prompt(text)
-                result = self.llm.json_generate(
-                    prompt,
-                    schema=CorrectedCommand,
-                    task="stt_correction",
-                )
-
-            if isinstance(result, CorrectedCommand) and result.corrected_text:
-                corrected = self.normalize(result.corrected_text)
-                confidence = result.confidence or 0.75
-
-                return CorrectionResult(
-                    original_text=text,
-                    corrected_text=corrected,
-                    confidence=confidence,
-                    method_used="llm_semantic",
-                    safe_to_apply=False,  # Will be validated in main pipeline
-                )
-        except Exception as e:
-            logger.warning("LLM semantic correction failed: %s", e)
-
-        return None
-
     def validate(self, original: str, corrected: str, confidence: float = 1.0) -> ValidationResult:
         """
-        Layer 5: Validate correction for safety.
+        Layer 4: Validate correction for safety.
         """
         return self.validator.validate(original, corrected, confidence)
 
@@ -417,26 +360,6 @@ class STTCorrector:
 
         # All lower
         return corrected_word.lower()
-
-    def _should_use_llm(self, text: str, original: str) -> bool:
-        """Determine if LLM correction should be attempted."""
-        # Use LLM if:
-        # 1. Text contains unknown tokens
-        # 2. Original had many noise markers
-        # 3. Text is complex (multiple clauses)
-
-        noise_words = {"an", "n", "uh", "umm", "err", "like"}
-        tokens = set(text.lower().split())
-
-        has_noise = bool(tokens & noise_words)
-        if has_noise:
-            return True
-
-        # Check if complex
-        if " and " in text or " then " in text or len(text.split()) > 8:
-            return True
-
-        return False
 
     def _cache_get(self, key: str) -> dict[str, Any] | None:
         """Get cached correction result."""
@@ -517,16 +440,12 @@ class STTCorrector:
         )
 
 
-# Global corrector instance
 _corrector_instance: STTCorrector | None = None
 
 
-def get_corrector(llm_client: LLMClient | None = None) -> STTCorrector:
+def get_corrector() -> STTCorrector:
     """Get or create the global STT corrector instance."""
     global _corrector_instance
     if _corrector_instance is None:
-        _corrector_instance = STTCorrector(llm_client=llm_client)
-    elif llm_client is not None:
-        _corrector_instance.llm = llm_client
-        _corrector_instance.enable_llm = True
+        _corrector_instance = STTCorrector()
     return _corrector_instance

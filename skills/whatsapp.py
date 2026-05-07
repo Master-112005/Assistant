@@ -2350,7 +2350,7 @@ class WhatsAppSkill(SkillBase):
         return bool(lookup.get("query") and not lookup.get("message_sent"))
 
     def _parse_contact_and_message(self, command: str) -> tuple[str, str]:
-        """Parse contact and message directly from command without LLM.
+        """Parse contact and message directly using pattern matching.
 
         Handles: "message X Y", "send message to X Y", "say X Y", "say to X Y", "tell X Y", "say hi to mummy"
         """

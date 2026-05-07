@@ -9,36 +9,9 @@ Tests cover:
 - Validation
 """
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.planner import ActionPlanner
 from core.plan_models import ActionType, ExecutionPlan, PlannerContext
-from core.llm import LLMClient
-from core.schemas import PlanSchema, PlanStep as SchemaPlanStep
-
-
-class PlannerLLMStub:
-    def __init__(self):
-        self.plan_calls = []
-        self.json_calls = []
-
-    def plan_actions(self, text: str, context=None):
-        self.plan_calls.append({"text": text, "context": context})
-        return PlanSchema(
-            steps=[
-                SchemaPlanStep(order=1, action="open_app", target="chrome", params={}),
-                SchemaPlanStep(order=2, action="search", target="chrome", params={"query": "weather"}),
-            ]
-        )
-
-    def json_generate(self, prompt: str, schema=None, task: str = "planning"):
-        self.json_calls.append({"prompt": prompt, "schema": schema, "task": task})
-        return PlanSchema(
-            steps=[
-                SchemaPlanStep(order=1, action="open_app", target="chrome", params={}),
-                SchemaPlanStep(order=2, action="search", target="chrome", params={"query": "weather"}),
-            ]
-        )
 
 
 class TestActionPlannerBasics:
@@ -47,7 +20,7 @@ class TestActionPlannerBasics:
     @pytest.fixture
     def planner(self):
         """Create a planner instance for tests."""
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_empty_input(self, planner):
         """Test handling of empty input."""
@@ -106,7 +79,7 @@ class TestMultiStepPlanning:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_open_and_search_with_and(self, planner):
         """Test 'open chrome and search IPL score'."""
@@ -119,21 +92,17 @@ class TestMultiStepPlanning:
         assert plan.steps[1].action == ActionType.SEARCH
         assert "ipl score" in plan.steps[1].params.get("query", "").lower()
         
-        # Check ordering
         assert plan.steps[0].order == 1
         assert plan.steps[1].order == 2
 
     def test_multiple_connectors(self, planner):
         """Test multiple connector variations."""
-        # Test with 'and'
         plan1 = planner.plan("open chrome and search weather")
         assert plan1.step_count == 2
 
-        # Test with comma
         plan2 = planner.plan("open chrome, search weather")
         assert plan2.step_count == 2
 
-        # Test with 'then'
         plan3 = planner.plan("open chrome then search weather")
         assert plan3.step_count == 2
 
@@ -164,17 +133,15 @@ class TestDependencies:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_search_depends_on_app_open(self, planner):
         """Search should depend on having the target app open."""
         plan = planner.plan("open chrome and search weather")
         
-        # Second step (search) should depend on first step (open app)
         search_step = plan.steps[1]
         open_step = plan.steps[0]
         
-        # Check if dependency exists
         assert len(search_step.depends_on) > 0
 
     def test_play_depends_on_search(self, planner):
@@ -191,16 +158,13 @@ class TestDependencies:
                 elif step.action == ActionType.PLAY:
                     play_step = step
             
-            # If both exist, play should depend on search
             if play_step and search_step:
-                # Check logical dependency
                 assert search_step.order < play_step.order
 
     def test_no_circular_dependencies(self, planner):
         """Plans should never have circular dependencies."""
         plan = planner.plan("open chrome and search weather and play result")
         
-        # Check for circular dependencies
         for step in plan.steps:
             visited = set()
             
@@ -214,7 +178,6 @@ class TestDependencies:
                             return True
                 return False
             
-            # Should not detect cycle
             assert not has_cycle(step.id, visited)
 
 
@@ -223,7 +186,7 @@ class TestRobustness:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_extra_whitespace(self, planner):
         """Handle commands with extra whitespace."""
@@ -258,12 +221,11 @@ class TestRobustness:
         """Handle completely unknown commands."""
         plan = planner.plan("blabla xyzabc nonsense")
         assert plan.step_count >= 1
-        # Should have at least one step (even if unknown)
 
     def test_partial_command(self, planner):
         """Handle partial/incomplete commands."""
         plan = planner.plan("open")
-        assert plan.step_count >= 1  # Should not crash
+        assert plan.step_count >= 1
 
 
 class TestValidation:
@@ -271,7 +233,7 @@ class TestValidation:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_valid_plan_is_recognized(self, planner):
         """Valid plans pass validation."""
@@ -306,7 +268,7 @@ class TestConfidence:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_confidence_in_valid_range(self, planner):
         """Confidence scores are between 0 and 1."""
@@ -325,7 +287,6 @@ class TestConfidence:
         plan_known = planner.plan("open chrome")
         plan_unknown = planner.plan("xyzabc 123 blah")
         
-        # Known should generally have higher confidence
         assert plan_known.confidence > plan_unknown.confidence
 
 
@@ -334,7 +295,7 @@ class TestPlannerContext:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_planning_with_empty_context(self, planner):
         """Planner works with no context."""
@@ -347,30 +308,13 @@ class TestPlannerContext:
         plan = planner.plan("search weather", context=context)
         assert plan.step_count >= 1
 
-    def test_llm_planner_receives_serialized_context(self):
-        llm = PlannerLLMStub()
-        planner = ActionPlanner(llm_client=llm)
-        context = PlannerContext(current_app="Chrome", browser_open=True)
-
-        plan = planner.plan("coordinate the browsing workflow", context=context, use_llm=True)
-
-        assert plan.step_count == 2
-        assert llm.plan_calls
-        assert llm.plan_calls[0]["context"]["current_app"] == "Chrome"
-        assert llm.plan_calls[0]["context"]["browser_open"] is True
-
-
-class TestPlannerLLMIntegration:
-    def test_multi_step_enhancement_uses_structured_llm_api(self):
-        llm = PlannerLLMStub()
-        planner = ActionPlanner(llm_client=llm)
-
-        plan = planner.plan("open chrome and search weather", use_llm=True)
-
-        assert plan.step_count == 2
-        assert plan.planner_used == "hybrid"
-        assert llm.json_calls
-        assert llm.json_calls[0]["task"] == "planning_enhancement"
+    def test_planning_with_context_hints(self, planner):
+        """Planner uses context hints when provided."""
+        context_hints = {"steps": [{"order": 1, "action": "OPEN_APP", "target": "notepad"}]}
+        plan = planner.plan("open notepad", context_hints=context_hints)
+        
+        assert plan.step_count == 1
+        assert plan.planner_used == "context"
 
 
 class TestPlanOutput:
@@ -378,7 +322,7 @@ class TestPlanOutput:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_plan_to_dict(self, planner):
         """Plans can be converted to dictionaries."""
@@ -424,7 +368,7 @@ class TestPlannerStatistics:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_plan_step_count(self, planner):
         """Step counts are accurate."""
@@ -437,7 +381,7 @@ class TestPlannerStatistics:
     def test_planner_used_tracking(self, planner):
         """Planner type is correctly recorded."""
         plan = planner.plan("open chrome")
-        assert plan.planner_used in ["rules", "llm", "hybrid", "fallback"]
+        assert plan.planner_used in ["rules", "context", "fallback"]
 
 
 class TestPlaySelection:
@@ -445,7 +389,7 @@ class TestPlaySelection:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_play_first_result(self, planner):
         """'Play first' correctly sets selection."""
@@ -461,7 +405,7 @@ class TestRealWorldExamples:
 
     @pytest.fixture
     def planner(self):
-        return ActionPlanner(llm_client=MagicMock())
+        return ActionPlanner()
 
     def test_example_ipl_score(self, planner):
         """'Open Chrome and search IPL score'."""

@@ -236,9 +236,8 @@ class RecoveryManager:
             return ActionTimeoutError(message=message, code=code, context=payload, recoverable=True)
         if code in {"ocr_unavailable", "backend_unavailable", "device_unavailable", "microphone_unavailable", "launcher_unavailable"}:
             return DeviceUnavailableError(message=message, code=code, context=payload, recoverable=True)
-        if code in {"unsupported", "unsupported_app_type", "safe_delete_unavailable", "music_provider_unavailable", "llm_unavailable"} or intent == "llm_unavailable":
-            resolved_code = "llm_unavailable" if intent == "llm_unavailable" and code in {"", "execution_error"} else (code or "not_supported")
-            return NotSupportedError(message=message, code=resolved_code, context=payload, recoverable=True)
+        if code in {"unsupported", "unsupported_app_type", "safe_delete_unavailable", "music_provider_unavailable", "multi_action_failed"}:
+            return NotSupportedError(message=message, code=code or "not_supported", context=payload, recoverable=True)
         if code in {"network_error", "search_failed"}:
             return NetworkError(message=message, code=code, context=payload, recoverable=True)
         lowered_message = message.lower()

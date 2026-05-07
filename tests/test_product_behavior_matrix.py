@@ -22,12 +22,9 @@ from skills.files import FileSkill
 from skills.system import SystemSkill
 
 
-class MatrixLLM:
+class MatrixNLP:
     def is_available(self, force_refresh: bool = False) -> bool:
-        return False
-
-    def query(self, *args, **kwargs):
-        raise RuntimeError("LLM should not be required for common product commands.")
+        return True
 
 
 class MatrixLauncher:

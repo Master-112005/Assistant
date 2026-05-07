@@ -22,8 +22,7 @@ def test_load_works():
     data = settings.load_settings()
     assert isinstance(data, dict)
     assert data["assistant_name"] == "Nova"
-    assert data["llm_provider"] == "ollama"
-    assert data["llm_model"] == "llama3"
+    assert data["planner_mode"] == "rules"
 
 def test_set_get_works():
     """Test getting and setting values."""
@@ -43,12 +42,11 @@ def test_save_persists():
 
 
 def test_missing_llm_keys_are_merged():
-    """Older settings files should be upgraded with new LLM defaults."""
+    """Older settings files should be upgraded with new defaults."""
     settings.SETTINGS_FILE.write_text('{"assistant_name": "Nova"}', encoding="utf-8")
     data = settings.load_settings()
     assert data["assistant_name"] == "Nova"
-    assert data["llm_enabled"] is True
-    assert data["llm_host"] == "http://localhost:11434"
+    assert data["planner_mode"] == "rules"
     assert data["context_engine_enabled"] is True
     assert data["use_recent_history_for_context"] is True
     assert data["context_confidence_threshold"] == 0.70

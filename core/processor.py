@@ -27,7 +27,7 @@ from core.identity import IdentityManager
 from core.intent import IntentDetector, IntentResult, IntentType
 from core.launcher import AppLauncher
 from core.app_launcher import DesktopAppLauncher
-from core.llm import LLMClient
+
 from core.logger import correlation_context, get_logger, new_correlation_id
 from core.normalizer import normalize_command, normalize_command_result
 from core.nlu import resolve_context_entities
@@ -65,7 +65,6 @@ class CommandProcessor:
         identity_mgr: IdentityManager | None = None,
         detector: IntentDetector | None = None,
         launcher: AppLauncher | None = None,
-        llm_client: LLMClient | None = None,
         browser_controller=None,
         skills_manager: SkillsManager | None = None,
         progress_callback: Optional[Callable[[str], None]] = None,
@@ -73,8 +72,7 @@ class CommandProcessor:
         permission_manager=None,
     ) -> None:
         self.identity_mgr = identity_mgr or IdentityManager()
-        self.llm = llm_client or LLMClient()
-        self.detector = detector or IntentDetector(self.llm)
+        self.detector = detector or IntentDetector()
         self.launcher = launcher or AppLauncher()
         self.desktop_launcher = DesktopAppLauncher(self.launcher)
         self.permission_manager = permission_manager or default_permission_manager
@@ -85,8 +83,8 @@ class CommandProcessor:
         )
         self.skills_manager.load_builtin_skills()
         self.browser_skill = BrowserSkill(controller=self.skills_manager.browser_controller)
-        self.corrector = get_corrector(llm_client=self.llm)
-        self.planner = ActionPlanner(llm_client=self.llm)
+        self.corrector = get_corrector()
+        self.planner = ActionPlanner()
         self.engine = ExecutionEngine(
             launcher=self.desktop_launcher,
             progress_callback=progress_callback,
@@ -461,9 +459,19 @@ class CommandProcessor:
                     )
 
                 if rule_result.intent == IntentType.MULTI_ACTION:
-                    llm_result = self._process_with_llm(working_text, rule_result)
+                    plan = self._generate_action_plan(working_text)
+                    if plan and plan.steps:
+                        return self._finalize_processed_result(
+                            self._execute_action_plan(plan),
+                            raw_input=raw_input,
+                            normalized_input=working_text,
+                            detected_intent=detected_intent,
+                            source=source,
+                            context_decision=context_decision,
+                            timer=timer,
+                        )
                     return self._finalize_processed_result(
-                        llm_result or self._build_result(False, "llm_error", responses.llm_unavailable_response()),
+                        self._build_result(False, "multi_action_error", "Could not process multi-action command."),
                         raw_input=raw_input,
                         normalized_input=working_text,
                         detected_intent=detected_intent,
@@ -477,19 +485,6 @@ class CommandProcessor:
                     if plan:
                         return self._finalize_processed_result(
                             self._execute_action_plan(plan),
-                            raw_input=raw_input,
-                            normalized_input=working_text,
-                            detected_intent=detected_intent,
-                            source=source,
-                            context_decision=context_decision,
-                            timer=timer,
-                        )
-
-                if self._should_use_llm(rule_result, working_text):
-                    llm_result = self._process_with_llm(working_text, rule_result)
-                    if llm_result is not None:
-                        return self._finalize_processed_result(
-                            llm_result,
                             raw_input=raw_input,
                             normalized_input=working_text,
                             detected_intent=detected_intent,
@@ -1236,32 +1231,6 @@ class CommandProcessor:
             f"I resolved the command for {decision.target_app}, but could not build an execution plan.",
         )
 
-    def _process_with_llm(self, text: str, rule_result: IntentResult) -> dict[str, Any] | None:
-        if not self.llm.is_available():
-            logger.warning("Local AI model unavailable. Using standard command mode.")
-            return self._build_result(False, "llm_unavailable", responses.llm_unavailable_response())
-
-        with metrics.measure("llm_intent_extraction", source="processor"):
-            llm_intent = self.llm.extract_intent(text)
-        if llm_intent is None:
-            logger.warning("LLM intent extraction failed for '%s'", text)
-            if rule_result.intent == IntentType.UNKNOWN:
-                return self._build_result(False, "llm_error", responses.llm_unavailable_response())
-            return None
-
-        entities = self._normalize_llm_entities(llm_intent)
-        self._update_runtime_state(llm_intent.intent, llm_intent.confidence, entities)
-
-        if llm_intent.intent == IntentType.MULTI_ACTION.value:
-            with metrics.measure("llm_plan_generation", source="processor"):
-                plan = self.llm.plan_actions(text, context=self._build_plan_context(text, rule_result, entities))
-            if plan and plan.steps:
-                return self._execute_plan(plan)
-            logger.warning("LLM planning failed for multi-action command '%s'", text)
-            return self._build_result(False, IntentType.MULTI_ACTION.value, responses.llm_unavailable_response())
-
-        return self._route_intent(llm_intent.intent, entities, text)
-
     def _run_callable_with_timeout(
         self,
         callback,
@@ -1433,13 +1402,11 @@ class CommandProcessor:
             return self._build_result(
                 False,
                 IntentType.MULTI_ACTION.value,
-                responses.llm_unavailable_response(),
-                error="llm_unavailable",
+                "I couldn't process this multi-step command.",
+                error="multi_action_failed",
                 data={"speak_response": True},
             )
 
-        # CRITICAL: Graceful fallback for UNKNOWN intents
-        # If we get here with UNKNOWN, we tried everything and LLM is unavailable
         if intent_name == IntentType.UNKNOWN.value:
             logger.warning("Command could not be classified: %s", text)
             return self._build_result(
@@ -1496,79 +1463,6 @@ class CommandProcessor:
         return noisy or detection_result.intent == IntentType.UNKNOWN or (
             detection_result.confidence < self.STT_CORRECTION_CONFIDENCE_THRESHOLD
         )
-
-    def _should_use_llm(self, rule_result: IntentResult, text: str) -> bool:
-        normalized = normalize_command(text)
-        if rule_result.intent in {IntentType.GREETING, IntentType.QUESTION, IntentType.HELP}:
-            return False
-        if self._is_status_question(normalized) or self._is_identity_question(normalized) or self._is_gratitude_phrase(normalized):
-            return False
-        if rule_result.intent == IntentType.UNKNOWN and self._is_low_information_unknown(normalized):
-            return False
-
-        # Skip LLM for short casual phrases that are likely greetings
-        # This prevents LLM timeout on simple phrases like "hi ra", "hello", etc.
-        tokens = normalized.split()
-        if len(tokens) <= 2 and rule_result.intent == IntentType.UNKNOWN:
-            first_token = tokens[0] if tokens else ""
-            if first_token in {"hi", "hello", "hey", "yo", "namaste", "ok", "okay"}:
-                return False
-
-        # Skip LLM for WhatsApp/Telegram message pattern - already detected via fast-path
-        if "message " in normalized and rule_result.intent in {IntentType.SEND_MESSAGE, IntentType.UNKNOWN}:
-            return False
-
-        # Skip LLM for follow-up patterns like "tell him hi" after pending contact
-        pending_msg = getattr(state, "pending_whatsapp_message", {})
-        if pending_msg.get("contact") and rule_result.intent in {IntentType.SEND_MESSAGE, IntentType.UNKNOWN}:
-            logger.info("Skipping LLM for WhatsApp pending follow-up")
-            return False
-
-        # Skip LLM for obvious app commands - these are already detected or should fail cleanly
-        if rule_result.intent in {IntentType.OPEN_APP, IntentType.CLOSE_APP}:
-            return False
-
-        # Skip LLM for system controls - already parsed via fast-path rules
-        if rule_result.intent in {
-            IntentType.VOLUME_UP, IntentType.VOLUME_DOWN, IntentType.SET_VOLUME,
-            IntentType.BRIGHTNESS_UP, IntentType.BRIGHTNESS_DOWN, IntentType.SET_BRIGHTNESS,
-            IntentType.MUTE, IntentType.UNMUTE, IntentType.LOCK_PC,
-            IntentType.SHUTDOWN_PC, IntentType.RESTART_PC, IntentType.SLEEP_PC,
-            IntentType.SYSTEM_CONTROL,
-        }:
-            return False
-
-        # Skip LLM for wireless radio controls (wifi/bluetooth) - already parsed via fast-path
-        if rule_result.intent == IntentType.SYSTEM_CONTROL:
-            entities = rule_result.entities or {}
-            control = str(entities.get("control") or entities.get("action") or "").lower()
-            if control in {"wifi", "bluetooth", "volume", "brightness"}:
-                return False
-
-        # Skip LLM for media controls - simple commands
-        if rule_result.intent in {
-            IntentType.PLAY_MEDIA, IntentType.PAUSE_MEDIA,
-            IntentType.NEXT_TRACK, IntentType.PREVIOUS_TRACK,
-        }:
-            return False
-
-        # Skip LLM for simple file path commands
-        if rule_result.intent == IntentType.OPEN_FILE and len(tokens) <= 4:
-            return False
-
-        # NEVER use LLM for system control tasks - always rule-based
-        if rule_result.intent == IntentType.SYSTEM_CONTROL:
-            return False
-
-        should_consider_llm = (
-            rule_result.intent == IntentType.UNKNOWN
-            or rule_result.intent == IntentType.MULTI_ACTION
-            or rule_result.confidence < self.RULE_CONFIDENCE_THRESHOLD
-            or self._looks_complex_command(text)
-        )
-        if not should_consider_llm:
-            return False
-        return self.llm.is_available()
 
     def _should_use_planner(self, rule_result: IntentResult, text: str) -> bool:
         """Determine whether the command should be passed through the action planner."""
@@ -1627,17 +1521,6 @@ class CommandProcessor:
                 IntentType.HELP.value,
             ],
         }
-
-    def _normalize_llm_entities(self, llm_intent: IntentSchema) -> dict[str, Any]:
-        entities = dict(llm_intent.entities)
-        if "app" not in entities and "app_name" in entities:
-            entities["app"] = entities["app_name"]
-        if "app_name" not in entities:
-            primary_app = self._extract_primary_app_name(entities)
-            if primary_app:
-                entities["app_name"] = primary_app
-                entities.setdefault("app", primary_app)
-        return entities
 
     @staticmethod
     def _extract_primary_app_name(entities: dict[str, Any]) -> str | None:
@@ -1730,7 +1613,6 @@ class CommandProcessor:
                 plan = self.planner.plan(
                     text,
                     context=context,
-                    use_llm=settings.get("planner_use_llm"),
                     context_hints=context_decision.plan_hints if context_decision else None,
                 )
 
@@ -1973,7 +1855,7 @@ class CommandProcessor:
         # Determine severity based on success and intent
         if success:
             severity = ResponseSeverity.INFO
-        elif intent in {"clarification", "llm_unavailable"}:
+        elif intent in {"clarification"}:
             severity = ResponseSeverity.WARNING
         else:
             severity = ResponseSeverity.ERROR
@@ -2129,8 +2011,6 @@ class CommandProcessor:
             return False
         if data.get("recovery_prompt") or data.get("recovery_attempted"):
             return False
-        if intent == "llm_unavailable" or error == "llm_unavailable":
-            return False
         if intent in {"clarification", "empty", "analytics_logs", "analytics_errors", "analytics_stats"}:
             return False
         if error in {"confirmation_required", "selection_required", "cancelled", "empty", "unknown_plugin_command"}:
@@ -2156,11 +2036,11 @@ class CommandProcessor:
             "microphone_unavailable",
             "backend_unavailable",
             "ocr_unavailable",
-            "llm_unavailable",
+            "multi_action_failed",
             "unsupported",
             "exception",
         }
-        if error in recoverable_errors or intent == "llm_unavailable":
+        if error in recoverable_errors:
             return True
         return any(key in data for key in ("requested_app", "matches", "cached_result", "device", "feature"))
 
@@ -2242,14 +2122,6 @@ class CommandProcessor:
             query = str(command_context.get("query") or self._resolve_search_query_text(command, entities)).strip()
             target = str(command_context.get("target") or self._extract_search_target(entities) or "").strip() or None
             return self.handle_search(query, target=target)
-        if intent == "llm_unavailable":
-            return self._build_result(
-                False,
-                "llm_unavailable",
-                responses.llm_unavailable_response(),
-                error="llm_unavailable",
-                data={"feature": "llm", "target_app": "recovery"},
-            )
         return self._build_result(
             False,
             "recovery_retry",

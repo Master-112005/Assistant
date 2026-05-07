@@ -92,7 +92,7 @@ class ExecutionPlan:
         normalized_text: The normalized/cleaned input text.
         steps: List of PlanStep objects in execution order.
         confidence: Overall confidence score (0.0-1.0).
-        planner_used: Which planner generated this ("rules", "llm", "hybrid").
+        planner_used: Which planner generated this ("rules", "context").
         has_dependencies: Whether any steps have dependencies.
         estimated_risk: Overall plan risk level.
         created_at: Timestamp when this plan was created.
