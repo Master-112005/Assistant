@@ -10,7 +10,6 @@ from core import settings, state
 from core.browser import BrowserController, BrowserOperationResult, BrowserState
 from core.browser_commands import ParsedBrowserCommand, parse_browser_command
 from core.logger import get_logger
-from core.ocr import OCREngine, get_ocr_engine
 from skills.base import SkillBase, SkillExecutionResult
 
 logger = get_logger(__name__)
@@ -57,10 +56,8 @@ class ChromeSkill(SkillBase):
         self,
         *,
         controller: BrowserController | None = None,
-        ocr_engine: OCREngine | None = None,
     ) -> None:
         self._controller = controller or BrowserController()
-        self._ocr = ocr_engine or get_ocr_engine()
 
     def can_handle(self, context: Mapping[str, Any], intent: str, command: str) -> bool:
         if not settings.get("chrome_skill_enabled"):
@@ -175,10 +172,9 @@ class ChromeSkill(SkillBase):
             "chrome_running": running,
             "auto_launch": bool(settings.get("auto_launch_chrome_if_needed")),
             "read_results_mode": settings.get("read_results_mode"),
-            "ocr_enabled": bool(settings.get("ocr_enabled")),
         }
 
-    def describe_window_title(self, title: str, *, ocr_text: str = "") -> dict[str, Any]:
+    def describe_window_title(self, title: str) -> dict[str, Any]:
         cleaned = self._extract_page_title(title)
         cleaned_lower = cleaned.lower()
         if cleaned and cleaned_lower not in _GENERIC_PAGE_TITLES:
@@ -187,14 +183,12 @@ class ChromeSkill(SkillBase):
                 "confidence": 0.88,
                 "details": {"page_title": cleaned, "source": "window_title"},
             }
-
-        ocr_line = self._first_meaningful_ocr_line(ocr_text)
-        if ocr_line:
-            return {
-                "summary": f'Chrome is open and shows "{ocr_line}".',
-                "confidence": 0.66,
-                "details": {"page_title": cleaned, "source": "ocr", "ocr_snippet": ocr_line},
-            }
+        
+        return {
+            "summary": "Chrome is open.",
+            "confidence": 0.7,
+            "details": {"source": "window_title"},
+        }
 
         return {
             "summary": "Chrome is active.",
@@ -477,10 +471,9 @@ class ChromeSkill(SkillBase):
             if items:
                 return items, "uia"
 
-        if mode in {"best_available", "ocr"}:
-            ocr_items = self._read_visible_text_ocr(browser_state)
-            if ocr_items:
-                return ocr_items, "ocr"
+        # Fallback to UIA only - OCR removed
+        items = self._read_visible_text_uia(browser_state)
+        return items if items else [], "uia"
 
         title = self._extract_page_title(browser_state.title)
         if title:
@@ -531,56 +524,6 @@ class ChromeSkill(SkillBase):
         except Exception as exc:  # pragma: no cover - depends on live UIA tree
             logger.debug("Chrome UIA read failed: %s", exc)
             return []
-
-    def _read_visible_text_ocr(self, browser_state: BrowserState) -> list[str]:
-        if not settings.get("ocr_enabled"):
-            return []
-
-        left, top, width, height = self._ocr_content_region(browser_state)
-        if width <= 0 or height <= 0:
-            return []
-
-        result = self._ocr.read_region(left, top, width, height)
-        if not result.lines:
-            return []
-
-        collected: list[str] = []
-        seen: set[str] = set()
-        for line in result.lines:
-            text = self._sanitize_visible_text(line.text)
-            lowered = text.lower()
-            if not text or lowered in seen or lowered in _CHROME_NOISE_PHRASES:
-                continue
-            seen.add(lowered)
-            collected.append(text)
-        return collected[:10]
-
-    @staticmethod
-    def _first_meaningful_ocr_line(text: str) -> str:
-        for raw_line in str(text or "").splitlines():
-            line = " ".join(raw_line.split()).strip()
-            if len(line) < 4:
-                continue
-            if line.lower() in _CHROME_NOISE_PHRASES:
-                continue
-            return line[:120]
-        return ""
-
-    @staticmethod
-    def _ocr_content_region(browser_state: BrowserState) -> tuple[int, int, int, int]:
-        left, top, right, bottom = browser_state.rect
-        width = max(0, right - left)
-        height = max(0, bottom - top)
-        content_top = top + max(110, int(height * 0.16))
-        content_bottom = bottom - max(30, int(height * 0.05))
-        content_left = left + int(width * 0.08)
-        content_right = right - int(width * 0.06)
-        return (
-            content_left,
-            content_top,
-            max(1, content_right - content_left),
-            max(1, content_bottom - content_top),
-        )
 
     def _extract_search_payload(self, command: str) -> tuple[str, str | None]:
         cleaned = self._strip_explicit_chrome_tokens(command)

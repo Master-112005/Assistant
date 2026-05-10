@@ -34,6 +34,7 @@ from core.execution_models import ExecutionResult, StepResult, StepStatus
 from core.executor import ExecutionEngine, _fail
 from core.plan_models import ActionType, ExecutionPlan, PlanStep
 from core.safety import SafetyGate, is_dangerous
+from skills.base import SkillExecutionResult
 
 
 # =========================================================================== #
@@ -194,7 +195,55 @@ class TestSingleStepLaunch:
         result = engine.execute_step(step, idx=1, total=1)
 
         assert result.status == StepStatus.FAILED
-        assert "No application name" in result.message
+        assert "app" in result.message.lower()
+
+
+def test_send_message_uses_whatsapp_skill_result():
+    engine = _engine_with_mock_launcher()
+    engine._whatsapp.send_message.return_value = SkillExecutionResult(
+        success=True,
+        intent="whatsapp_message",
+        response="I sent 'hi' to Charan.",
+        skill_name="WhatsAppSkill",
+        data={"contact": "charan", "message": "hi", "target_app": "whatsapp", "verified": True},
+    )
+    step = _make_step(
+        "step_1",
+        ActionType.SEND_MESSAGE,
+        target="charan",
+        params={"message": "hi", "target_app": "whatsapp"},
+    )
+
+    result = engine.execute_step(step, idx=1, total=1)
+
+    assert result.status == StepStatus.SUCCESS
+    assert result.message == "I sent 'hi' to Charan."
+    assert result.data["target_app"] == "whatsapp"
+    engine._whatsapp.send_message.assert_called_once_with("charan", "hi")
+
+
+def test_send_message_returns_skill_failure_instead_of_manual_fallback():
+    engine = _engine_with_mock_launcher()
+    engine._whatsapp.send_message.return_value = SkillExecutionResult(
+        success=False,
+        intent="whatsapp_action",
+        response="Couldn't send to Charan. Check if they exist.",
+        skill_name="WhatsAppSkill",
+        error="send_failed",
+        data={"target_app": "whatsapp"},
+    )
+    step = _make_step(
+        "step_1",
+        ActionType.SEND_MESSAGE,
+        target="charan",
+        params={"message": "hi", "target_app": "whatsapp"},
+    )
+
+    result = engine.execute_step(step, idx=1, total=1)
+
+    assert result.status == StepStatus.FAILED
+    assert "Find Charan and send" not in result.message
+    assert result.error == "send_failed"
 
 
 # =========================================================================== #

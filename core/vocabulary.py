@@ -57,7 +57,7 @@ class Vocabulary:
     # Communication apps
     COMMUNICATION_APPS = {
         "whatsapp": {"aliases": ["watsapp", "whatsup", "whats app"]},
-        "telegram": {"aliases": ["telegrama", "telegram app"]},
+        "telegram": {"aliases": ["telegrama", "telegram app", "telagram"]},
         "discord": {"aliases": ["discored", "discord app"]},
         "skype": {"aliases": ["skyp"]},
         "teams": {"aliases": ["microsoft teams", "team", "teams app"]},

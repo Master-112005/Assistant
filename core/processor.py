@@ -18,7 +18,7 @@ from core.context_models import ContextDecision, NULL_DECISION
 from core.conversation_memory import TrackedEntity, EntityType, conversation_memory as _cm
 from core.resolver import reference_resolver as _resolver
 from core.correction import get_corrector
-from core.execution_models import ExecutionResult
+from core.execution_models import ExecutionResult, StepStatus
 from core.executor import CommandExecutor, ExecutionEngine
 from core.errors import ActionTimeoutError
 from core.metrics import metrics
@@ -388,7 +388,8 @@ class CommandProcessor:
 
                 state.last_input_text = working_text
                 with metrics.measure("intent_detection", source=source, pipeline="rules"):
-                    rule_result = self.detector.detect(cleaned, working_text, context=self._runtime_context_snapshot())
+                    # Use normalized text for intent detection to properly handle multi-action commands
+                    rule_result = self.detector.detect(normalized_input, normalized_input, context=self._runtime_context_snapshot())
                 working_text = rule_result.cleaned_text or working_text
                 normalized_input = rule_result.cleaned_text or normalized_input or working_text
                 detected_intent = rule_result.intent.value
@@ -906,6 +907,10 @@ class CommandProcessor:
         intent = rule_result.intent
         entities = rule_result.entities or {}
 
+        # Multi-action must go through planner, not fast-path
+        if intent == IntentType.MULTI_ACTION:
+            return None
+
         # OPEN_APP with explicit target - fastest path
         if intent == IntentType.OPEN_APP:
             app_name = self._extract_primary_app_name(entities)
@@ -1289,8 +1294,6 @@ class CommandProcessor:
             timeout = 10.0
         elif normalized_route == "whatsapp" or normalized_intent in {"whatsapp_call", "whatsapp_message", "send_message"}:
             timeout = float(settings.get("whatsapp_skill_timeout_seconds") or 60)
-        elif normalized_route == "ocr" or normalized_intent.startswith("ocr"):
-            timeout = float(settings.get("ocr_timeout_seconds") or 15)
         else:
             timeout = command_timeout
 
@@ -1592,6 +1595,9 @@ class CommandProcessor:
             return None
 
         try:
+            # Normalize the input text before planning
+            normalized_text = normalize_command_result(text).normalized_text if text else ""
+            planning_text = normalized_text or text
             with metrics.measure("planner_generation", source="processor"):
                 context = PlannerContext(
                     current_app=state.current_context or state.current_app,
@@ -1611,7 +1617,7 @@ class CommandProcessor:
                     rewritten_command=context_decision.rewritten_command if context_decision else "",
                 )
                 plan = self.planner.plan(
-                    text,
+                    planning_text,
                     context=context,
                     context_hints=context_decision.plan_hints if context_decision else None,
                 )
@@ -1638,15 +1644,8 @@ class CommandProcessor:
         try:
             with metrics.measure("plan_execution", source="processor", steps=plan.step_count):
                 exec_result: ExecutionResult = self.engine.execute_plan(plan)
-            messages: list[str] = []
-            for step_result in exec_result.results:
-                if step_result.message:
-                    messages.append(step_result.message)
-
-            response = exec_result.summary
-            if messages and settings.get("show_step_progress"):
-                response = "\n".join(messages) + "\n" + exec_result.summary
-
+            
+            response = self._build_natural_response(plan, exec_result)
             return self._build_result(exec_result.success, "multi_action", response)
         finally:
             state.is_executing = False
@@ -1774,6 +1773,10 @@ class CommandProcessor:
             normalized_input=normalized_input,
             raw_input=raw_input,
         )
+        final_result_data = final_result.get("data", {})
+        if isinstance(final_result_data, dict):
+            final_result_data["response_emitted"] = True
+            final_result["data"] = final_result_data
         self._emit_result_alert(final_result)
         state.last_error_id = "" if final_result.get("success") else resolved_trace_id
         logger.info(
@@ -2035,7 +2038,6 @@ class CommandProcessor:
             "device_unavailable",
             "microphone_unavailable",
             "backend_unavailable",
-            "ocr_unavailable",
             "multi_action_failed",
             "unsupported",
             "exception",
@@ -2342,6 +2344,10 @@ class CommandProcessor:
     ) -> dict[str, Any] | None:
         from core.router import route_command
 
+        # Multi-action intents must go to planner, not to any skill
+        if rule_result.intent.value == IntentType.MULTI_ACTION.value:
+            return None
+
         direct_intents = {
             IntentType.OPEN_APP.value,
             IntentType.CLOSE_APP.value,
@@ -2493,11 +2499,6 @@ class CommandProcessor:
             "active_music_provider": getattr(state, "active_music_provider", ""),
             "last_track_name": getattr(state, "last_track_name", ""),
             "last_artist_name": getattr(state, "last_artist_name", ""),
-            "ocr_ready": getattr(state, "ocr_ready", False),
-            "last_ocr_text": getattr(state, "last_ocr_text", ""),
-            "last_ocr_engine": getattr(state, "last_ocr_engine", ""),
-            "last_screenshot_path": getattr(state, "last_screenshot_path", ""),
-            "last_text_matches": list(getattr(state, "last_text_matches", []) or []),
             "awareness_ready": getattr(state, "awareness_ready", False),
             "last_awareness_report": dict(getattr(state, "last_awareness_report", {}) or {}),
             "last_desktop_snapshot": dict(getattr(state, "last_desktop_snapshot", {}) or {}),
@@ -2580,6 +2581,104 @@ class CommandProcessor:
         if result.success:
             state.last_successful_action = ":".join(part for part in (result.intent, "files") if part)
         return result.to_dict()
+
+    def _build_natural_response(self, plan: ExecutionPlan, exec_result: ExecutionResult) -> str:
+        """Build a natural language response from execution results."""
+        if not exec_result.results:
+            return "Done."
+        
+        successful_steps = [r for r in exec_result.results if r.status == StepStatus.SUCCESS]
+        failed_steps = [r for r in exec_result.results if r.status == StepStatus.FAILED]
+        
+        if exec_result.success and successful_steps:
+            if len(successful_steps) == 1:
+                step = successful_steps[0]
+                return self._make_response_natural(step.message or "Done.")
+            else:
+                return self._summarize_multi_step_success(plan, successful_steps)
+        
+        if failed_steps:
+            failed_step = failed_steps[0]
+            error_msg = failed_step.message or "Something went wrong."
+            
+            if "timeout" in error_msg.lower():
+                return self._handle_timeout_error(plan, failed_step)
+            
+            return self._make_response_natural(error_msg)
+        
+        return "Done."
+
+    def _make_response_natural(self, message: str) -> str:
+        """Convert technical messages to natural language."""
+        if not message:
+            return "Done."
+        
+        message = message.strip()
+        
+        technical_phrases = {
+            "Step step_": "",
+            "TIMEOUT after": "took too long to",
+            "SUCCESS in": "completed in",
+            "opened successfully": "opened",
+            "Message sent to": "Sent message to",
+            "WhatsApp opened successfully": "Opened WhatsApp",
+            "action_executed": "",
+            "permission_evaluated": "",
+        }
+        
+        for old, new in technical_phrases.items():
+            message = message.replace(old, new)
+        
+        if message.startswith("."):
+            message = message[1:].strip()
+        
+        if message.endswith("."):
+            message = message[:-1].strip()
+        
+        if len(message) < 3:
+            return "Done."
+        
+        return message
+
+    def _summarize_multi_step_success(self, plan: ExecutionPlan, successful_steps: list) -> str:
+        """Summarize successful multi-step execution in natural language."""
+        actions = []
+        for step in successful_steps:
+            action_type = step.step_id.split("_")[0] if step.step_id else "step"
+            if "open" in str(step.message or "").lower():
+                app_match = str(step.message or "").lower()
+                for app in ["whatsapp", "chrome", "youtube", "spotify", "music"]:
+                    if app in app_match:
+                        actions.append(f"opened {app}")
+                        break
+                else:
+                    actions.append("opened an app")
+            elif "sent" in str(step.message or "").lower() or "message" in str(step.message or "").lower():
+                actions.append("sent a message")
+            elif "search" in str(step.message or "").lower():
+                actions.append("did a search")
+            else:
+                actions.append("completed a task")
+        
+        if not actions:
+            return "All done!"
+        
+        if len(actions) == 1:
+            return actions[0].capitalize() + "."
+        
+        return " and ".join(actions[:-1]).capitalize() + f" and {actions[-1]}."
+
+    def _handle_timeout_error(self, plan: ExecutionPlan, failed_step) -> str:
+        """Handle timeout errors with helpful recovery suggestions."""
+        step_action = str(failed_step.step_id or "")
+        
+        if "whatsapp" in step_action.lower() or "message" in step_action.lower():
+            return "The message took too long to send. WhatsApp might be slow right now. Want me to try again?"
+        
+        if "open" in step_action.lower():
+            return "The app is taking too long to open. Let me try again."
+        
+        return "That took longer than expected. Want me to try again?"
 
     def _build_result(
         self,
@@ -2780,8 +2879,6 @@ class CommandProcessor:
         intent = str(result.get("intent", "")).strip().lower()
         if selected_skill:
             metrics.record_duration(f"request_latency.{selected_skill}", duration_ms, intent=intent)
-        if selected_skill == "OCRSkill" or intent.startswith("ocr"):
-            metrics.record_duration("ocr_request_latency", duration_ms, intent=intent)
         if selected_skill == "FileSkill" or intent.startswith("file_") or intent == "file_action":
             metrics.record_duration("file_operation_latency", duration_ms, intent=intent)
 

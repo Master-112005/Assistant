@@ -101,7 +101,7 @@ class ScreenAwarenessEngine:
             state.last_visible_apps = []
             return report
 
-        snapshot = self._collector.capture_desktop_snapshot(include_ocr=bool(settings.get("awareness_use_ocr")))
+        snapshot = self._collector.capture_desktop_snapshot()
         logger.info("Visible windows: %d", len(snapshot.visible_windows))
 
         items: list[AwarenessItem] = []
@@ -223,7 +223,7 @@ class ScreenAwarenessEngine:
             return self._item_from_insight(
                 "chrome",
                 "browser",
-                self._chrome.describe_window_title(window.title, ocr_text=snapshot.ocr_text if window.is_foreground else ""),
+                self._chrome.describe_window_title(window.title),
                 window=window,
             )
 

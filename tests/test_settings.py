@@ -72,17 +72,11 @@ def test_missing_llm_keys_are_merged():
     assert data["confirm_before_sending_message"] is False
     assert data["read_private_content_mode"] == "names_only"
     assert data["music_skill_enabled"] is True
-    assert data["preferred_music_app"] == "spotify"
+assert data["preferred_music_app"] == "spotify"
     assert data["auto_open_music_app_if_needed"] is True
     assert data["media_key_control_enabled"] is True
-    assert data["ocr_enabled"] is True
-    assert data["ocr_engine"] == "easyocr"
-    assert data["ocr_capture_mode"] == "active_window"
-    assert data["ocr_preprocess"] is True
-    assert data["ocr_min_confidence"] == 0.40
     assert data["save_debug_screenshots"] is False
     assert data["screen_awareness_enabled"] is True
-    assert data["awareness_use_ocr"] is True
     assert data["awareness_max_items"] == 5
     assert data["speak_awareness_summary"] is False
     assert data["ignore_background_windows"] is True

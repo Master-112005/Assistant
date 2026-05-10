@@ -136,11 +136,11 @@ def fallback_input_mode() -> dict[str, Any]:
 def reduced_capability_mode(feature: str = "") -> dict[str, Any]:
     """Describe a graceful-degradation mode for an unavailable subsystem."""
     normalized = str(feature or "").strip().lower()
-    if normalized in {"ocr", "screen"}:
+    if normalized in {"screen"}:
         return {
-            "feature": normalized or "ocr",
-            "mode": "text_only",
-            "message": "Screen reading is unavailable. Typed and app-control commands still work.",
+            "feature": normalized or "screen",
+            "mode": "uia_only",
+            "message": "Screen awareness uses UIA. Typed and app-control commands still work.",
         }
     if normalized in {"microphone", "stt", "voice"}:
         return {

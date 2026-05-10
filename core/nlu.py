@@ -330,6 +330,22 @@ def _extract_contact_and_message(payload: str) -> tuple[str, str]:
     if not cleaned:
         return "", ""
 
+    say_match = re.match(r"^say\s+(.+?)\s+to\s+(.+)$", cleaned, flags=re.IGNORECASE)
+    if say_match:
+        return say_match.group(2).strip(), say_match.group(1).strip()
+
+    tell_match = re.match(r"^tell\s+(.+?)\s+(?:that\s+)?(.+)$", cleaned, flags=re.IGNORECASE)
+    if tell_match:
+        return tell_match.group(1).strip(), tell_match.group(2).strip()
+
+    send_colon_match = re.match(
+        r"^(?:send\s+(?:a\s+)?message\s+to|message|text|msg|notify|inform|ping)\s+(.+?)\s*:\s*(.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if send_colon_match:
+        return send_colon_match.group(1).strip(), send_colon_match.group(2).strip()
+
     quoted = re.match(r"(.+?)\s+\"(.+)\"$", cleaned)
     if quoted:
         return quoted.group(1).strip(), quoted.group(2).strip()

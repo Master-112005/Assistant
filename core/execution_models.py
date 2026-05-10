@@ -171,9 +171,35 @@ class ExecutionResult:
         self.success         = self.failed_steps == 0 and self.cancelled_steps == 0
 
         if self.success:
-            self.summary = (
-                f"Completed {self.completed_steps} of {self.total_steps} steps successfully."
-            )
+            # Build conversational summary from step messages
+            step_messages = []
+            for r in self.results:
+                if r.message:
+                    # Clean up the message - remove technical artifacts
+                    msg = r.message.strip()
+                    # Remove trailing periods if present, we'll add natural ones
+                    if msg.endswith('.'):
+                        msg = msg[:-1]
+                    step_messages.append(msg)
+            
+            if step_messages:
+                # Create natural conversational summary
+                import random
+                openers = ["Sure!", "Got it!", "All done!", "Done!", "Perfect!", "Here you go!", "Done!"]
+                opener = random.choice(openers)
+                
+                if len(step_messages) == 1:
+                    self.summary = f"{opener} {step_messages[0]}"
+                else:
+                    # Join with natural phrasing
+                    if len(step_messages) == 2:
+                        self.summary = f"{opener} {step_messages[0]} and {step_messages[1]}"
+                    else:
+                        self.summary = f"{opener} {', '.join(step_messages[:-1])}, and {step_messages[-1]}"
+            else:
+                import random
+                openers = ["All done!", "Finished!", "Done!", "Completed!"]
+                self.summary = f"{random.choice(openers)} {self.completed_steps} task{'s' if self.completed_steps != 1 else ''} completed."
         else:
             parts: List[str] = []
             if self.completed_steps:
@@ -184,7 +210,7 @@ class ExecutionResult:
                 parts.append(f"{self.skipped_steps} skipped")
             if self.cancelled_steps:
                 parts.append(f"{self.cancelled_steps} cancelled")
-            self.summary = f"Plan finished: {', '.join(parts)}."
+            self.summary = f"Hmm, something went wrong: {', '.join(parts)}."
 
     def to_dict(self) -> Dict[str, Any]:
         return {

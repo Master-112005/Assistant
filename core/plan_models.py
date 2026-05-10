@@ -14,6 +14,7 @@ import time
 class ActionType(Enum):
     """Enumeration of all supported action types."""
     OPEN_APP = "open_app"
+    CLOSE_APP = "close_app"
     SEARCH = "search"
     PLAY = "play"
     APP_ACTION = "app_action"
@@ -23,6 +24,7 @@ class ActionType(Enum):
     FILE_ACTION = "file_action"
     ASK_USER = "ask_user"
     WAIT = "wait"
+    SEND_MESSAGE = "send_message"
     UNKNOWN = "unknown"
 
     def __str__(self) -> str:

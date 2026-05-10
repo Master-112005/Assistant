@@ -234,7 +234,7 @@ class RecoveryManager:
             return PermissionDeniedError(message=message, code=code, context=payload, recoverable=True)
         if code in {"timeout", "action_timeout", "launch_timeout"}:
             return ActionTimeoutError(message=message, code=code, context=payload, recoverable=True)
-        if code in {"ocr_unavailable", "backend_unavailable", "device_unavailable", "microphone_unavailable", "launcher_unavailable"}:
+        if code in {"backend_unavailable", "device_unavailable", "microphone_unavailable", "launcher_unavailable"}:
             return DeviceUnavailableError(message=message, code=code, context=payload, recoverable=True)
         if code in {"unsupported", "unsupported_app_type", "safe_delete_unavailable", "music_provider_unavailable", "multi_action_failed"}:
             return NotSupportedError(message=message, code=code or "not_supported", context=payload, recoverable=True)

@@ -79,7 +79,7 @@ def sharpen(img: Any, percent: int = 180) -> Image.Image:
     return image.filter(ImageFilter.UnsharpMask(radius=1.4, percent=max(100, int(percent)), threshold=2))
 
 
-def preprocess_for_ocr(
+def preprocess_for_capture(
     img: Any,
     *,
     enabled: bool = True,
@@ -91,6 +91,7 @@ def preprocess_for_ocr(
     min_width: int = 1200,
     min_height: int = 700,
 ) -> Image.Image:
+    """Preprocess image for screen capture - no OCR needed."""
     image = _as_pil_image(img)
     if not enabled:
         return image

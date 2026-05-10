@@ -2,57 +2,97 @@
 User-facing response helpers for the direct desktop command pipeline.
 """
 from __future__ import annotations
+import random
 
 from core.app_launcher import app_display_name
+
+_CONVERSATIONAL_OPENERS = [
+    "Sure thing! ",
+    "On it! ",
+    "Got it! ",
+    "Okay! ",
+    "Alright! ",
+    "No problem! ",
+    "Absolutely! ",
+    "",
+]
+
+_CONVERSATIONAL_CLOSERS = [
+    " for you",
+    "",
+    " now",
+    "",
+]
 
 
 class CommandResponseBuilder:
     @staticmethod
     def opening_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Opening {label}.", detail)
+        openers = ["Got it!", "Sure!", "On it!", "Opening", "Starting"]
+        opener = random.choice(openers)
+        if detail:
+            return f"{opener} {label}. {detail}"
+        return f"{opener} {label}."
 
     @staticmethod
     def closing_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Closing {label}.", detail)
+        openers = ["Got it!", "Sure!", "On it!", "Closing", "Stopping"]
+        opener = random.choice(openers)
+        if detail:
+            return f"{opener} {label}. {detail}"
+        return f"{opener} {label}."
 
     @staticmethod
     def minimizing_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Minimizing {label}.", detail)
+        openers = ["Got it!", "Sure!", "On it!", "Minimizing", "Hiding"]
+        opener = random.choice(openers)
+        if detail:
+            return f"{opener} {label}. {detail}"
+        return f"{opener} {label}."
 
     @staticmethod
     def maximizing_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Maximizing {label}.", detail)
+        openers = ["Got it!", "Sure!", "On it!", "Maximizing", "Expanding"]
+        opener = random.choice(openers)
+        if detail:
+            return f"{opener} {label}. {detail}"
+        return f"{opener} {label}."
 
     @staticmethod
     def focusing_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Switching to {label}.", detail)
+        opener = random.choice(_CONVERSATIONAL_OPENERS)
+        return _combine(f"{opener}Switching to {label}.", detail)
 
     @staticmethod
     def restoring_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Restoring {label}.", detail)
+        opener = random.choice(_CONVERSATIONAL_OPENERS)
+        return _combine(f"{opener}Restoring {label}.", detail)
 
     @staticmethod
     def toggling_app(app_name: str, detail: str = "") -> str:
         label = app_display_name(app_name)
-        return _combine(f"Toggling {label}.", detail)
+        opener = random.choice(_CONVERSATIONAL_OPENERS)
+        return _combine(f"{opener}Toggling {label}.", detail)
 
     @staticmethod
     def searching_web(query: str, browser: str = "") -> str:
         cleaned_query = str(query or "").strip()
+        opener = random.choice(_CONVERSATIONAL_OPENERS)
         if browser:
-            return f"Searching {cleaned_query} in {app_display_name(browser)}."
-        return f"Searching {cleaned_query}."
+            return f"{opener}Searching for {cleaned_query} in {app_display_name(browser)}."
+        return f"{opener}Searching for {cleaned_query}."
 
     @staticmethod
     def opening_website(name: str, detail: str = "") -> str:
         label = app_display_name(name)
-        return _combine(f"Opening {label}.", detail)
+        opener = random.choice(_CONVERSATIONAL_OPENERS)
+        return _combine(f"{opener}Opening {label}.", detail)
 
 
 def _combine(prefix: str, detail: str) -> str:

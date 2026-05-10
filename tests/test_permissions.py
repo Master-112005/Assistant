@@ -49,6 +49,7 @@ def _make_manager(*, level: str = "BASIC", time_fn=None):
             "confirm_delete": True,
             "confirm_overwrite": True,
             "confirm_before_sending_message": False,
+            "whatsapp_no_confirmation": True,
             "file_bulk_delete_confirmation_threshold": 25,
         }
         mock_settings.get = lambda key, default=None: defaults.get(key, default)
@@ -351,6 +352,12 @@ class TestEvaluateBasicLevel(unittest.TestCase):
             r = self.mgr.evaluate("close_app", {})
             self.assertFalse(r.allowed)
             self.assertEqual(r.decision, Decision.REQUIRE_CONFIRMATION)
+
+    def test_whatsapp_send_respects_no_confirmation_policy(self):
+        with _patched(self.mgr):
+            r = self.mgr.evaluate("send_message", {"target": "hemanth", "message": "hi"})
+            self.assertTrue(r.allowed)
+            self.assertEqual(r.decision, Decision.ALLOW)
 
     def test_dangerous_requires_confirmation(self):
         with _patched(self.mgr):

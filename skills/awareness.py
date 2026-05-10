@@ -55,14 +55,14 @@ class AwarenessSkill(SkillBase):
         return {
             "target": "screen",
             "supports": ["describe_screen", "screen_status", "desktop_summary"],
-            "use_ocr": bool(settings.get("awareness_use_ocr")),
+            "use_uia": True,
             "max_items": int(settings.get("awareness_max_items") or 5),
         }
 
     def health_check(self) -> dict[str, Any]:
         return {
             "enabled": bool(settings.get("screen_awareness_enabled")),
-            "use_ocr": bool(settings.get("awareness_use_ocr")),
+            "use_uia": True,
             "max_items": int(settings.get("awareness_max_items") or 5),
             "ignore_background_windows": bool(settings.get("ignore_background_windows")),
         }

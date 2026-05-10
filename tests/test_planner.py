@@ -106,6 +106,25 @@ class TestMultiStepPlanning:
         plan3 = planner.plan("open chrome then search weather")
         assert plan3.step_count == 2
 
+    def test_implicit_open_then_message_without_connector(self, planner):
+        """Implicit chained commands should split into executable steps."""
+        plan = planner.plan("open whatsapp say hi to hemanth")
+
+        assert plan.step_count == 2
+        assert plan.steps[0].action == ActionType.OPEN_APP
+        assert plan.steps[0].target.lower() == "whatsapp"
+        assert plan.steps[1].action == ActionType.SEND_MESSAGE
+        assert plan.steps[1].target.lower() == "hemanth"
+        assert plan.steps[1].params["message"].lower() == "hi"
+
+    def test_implicit_open_then_message_binds_to_whatsapp_dependency(self, planner):
+        plan = planner.plan("open whatsapp say hello to hemanth")
+
+        assert plan.step_count == 2
+        assert plan.steps[1].depends_on == [plan.steps[0].id]
+        assert plan.steps[1].params["app"] == "whatsapp"
+        assert plan.steps[1].params["target_app"] == "whatsapp"
+
     def test_three_step_sequence(self, planner):
         """Test three-step command sequence."""
         plan = planner.plan("open youtube, search dulaunder song, then play first result")

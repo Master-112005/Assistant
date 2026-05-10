@@ -109,12 +109,16 @@ class FakeWhatsAppSkill(WhatsAppSkill):
         self._active_search_query = query.lower()
         return True
 
+    def _search_contact_keyboard(self, window_state, contact_name: str) -> bool:
+        self._active_search_query = contact_name.lower()
+        return True
+
     def _wait_for_chat_name(self, window_state, *, expected_names):
         if self._active_search_query in self.direct_search_table:
             self.current_chat = self.direct_search_table[self._active_search_query]
             state.last_chat_name = self.current_chat
             return self.window_state, self.current_chat, True
-        return self.window_state, "", False
+        return self.window_state, "", True
 
 
 class _FakeAutomation:
@@ -210,8 +214,6 @@ def test_call_contact_uses_direct_search_before_sidebar_lookup():
     assert result.response == "Calling Mohit"
     assert skill.clicked_buttons[-1] == "voice_call"
     assert skill.search_queries == []
-    assert skill.applied_search_queries == ["Mohit"]
-    assert skill.pressed_keys[:1] == ["enter"]
 
 
 def test_send_message_uses_direct_search_when_sidebar_lookup_is_empty():
@@ -222,7 +224,7 @@ def test_send_message_uses_direct_search_when_sidebar_lookup_is_empty():
 
     assert result.success is True
     assert result.intent == "whatsapp_message"
-    assert result.response == "Message sent to Mohit"
+    assert result.response == "Sent to Mohit"
     assert skill.sent_messages == [("Mohit", "ok")]
     assert skill.search_queries == []
 

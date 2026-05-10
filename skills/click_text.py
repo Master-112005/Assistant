@@ -8,7 +8,6 @@ from typing import Any, Mapping
 
 from core import settings
 from core.click_text import TextClickEngine, get_text_click_engine
-from core.ocr import get_ocr_engine
 from core.text_utils import normalize_command
 from skills.base import SkillBase, SkillExecutionResult
 
@@ -110,21 +109,18 @@ class ClickTextSkill(SkillBase):
                 "tap_visible_text",
                 "press_visible_text",
                 "safe_ranked_text_click",
-                "ocr_click_verification",
             ],
             "verify_clicks": bool(settings.get("click_text_verify")),
             "fuzzy_match": bool(settings.get("click_text_fuzzy_match")),
         }
 
     def health_check(self) -> dict[str, Any]:
-        ocr_status = get_ocr_engine().get_status()
         return {
             "enabled": bool(settings.get("click_text_enabled")),
             "min_confidence": float(settings.get("click_text_min_confidence") or 0.55),
             "verify_clicks": bool(settings.get("click_text_verify")),
             "fuzzy_match": bool(settings.get("click_text_fuzzy_match")),
-            "ocr_ready": bool(ocr_status.get("ready")),
-            "ocr_engine": str(ocr_status.get("active_engine") or ""),
+            "uia_available": True,
         }
 
     @staticmethod

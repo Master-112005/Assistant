@@ -11,7 +11,6 @@ from typing import Any
 from core import settings
 from core.automation import DesktopAutomation, WindowTarget
 from core.logger import get_logger
-from core.ocr import OCREngine, OCRResult, get_ocr_engine
 from core.window_context import ActiveWindowDetector, WindowInfo
 
 logger = get_logger(__name__)
@@ -59,8 +58,6 @@ class DesktopSnapshot:
     active_window: WindowSnapshot | None
     visible_windows: list[WindowSnapshot]
     contexts: list[str]
-    ocr_text: str = ""
-    ocr_result: OCRResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,8 +65,6 @@ class DesktopSnapshot:
             "active_window": _window_snapshot_to_dict(self.active_window) if self.active_window else None,
             "visible_windows": [_window_snapshot_to_dict(window) for window in self.visible_windows],
             "contexts": list(self.contexts),
-            "ocr_text": self.ocr_text,
-            "ocr_result": self.ocr_result.to_dict() if self.ocr_result else None,
         }
 
 
@@ -81,13 +76,12 @@ class DesktopStateCollector:
         *,
         automation: DesktopAutomation | None = None,
         detector: ActiveWindowDetector | None = None,
-        ocr_engine: OCREngine | None = None,
     ) -> None:
         self._automation = automation or DesktopAutomation()
         self._detector = detector or ActiveWindowDetector()
-        self._ocr = ocr_engine or get_ocr_engine()
 
-    def capture_desktop_snapshot(self, *, include_ocr: bool | None = None) -> DesktopSnapshot:
+    def capture_desktop_snapshot(self) -> DesktopSnapshot:
+        """Capture desktop state using UIA only - no OCR."""
         visible_windows = self.list_visible_windows()
         active_window = next((window for window in visible_windows if window.is_foreground), None)
         if active_window is None:
@@ -95,25 +89,11 @@ class DesktopStateCollector:
             if active_window is not None and all(window.hwnd != active_window.hwnd for window in visible_windows):
                 visible_windows.insert(0, active_window)
 
-        if include_ocr is None:
-            include_ocr = bool(settings.get("awareness_use_ocr"))
-
-        ocr_result: OCRResult | None = None
-        ocr_text = ""
-        if include_ocr and active_window is not None:
-            try:
-                ocr_result = self._ocr.read_active_window()
-                ocr_text = ocr_result.full_text
-            except Exception as exc:
-                logger.warning("Desktop snapshot OCR failed: %s", exc)
-
         return DesktopSnapshot(
             timestamp=time.time(),
             active_window=active_window,
             visible_windows=visible_windows,
             contexts=self._collect_contexts(visible_windows),
-            ocr_text=ocr_text,
-            ocr_result=ocr_result,
         )
 
     def list_visible_windows(self) -> list[WindowSnapshot]:
@@ -228,8 +208,8 @@ class DesktopStateCollector:
 desktop_state_collector = DesktopStateCollector()
 
 
-def capture_desktop_snapshot(*, include_ocr: bool | None = None) -> DesktopSnapshot:
-    return desktop_state_collector.capture_desktop_snapshot(include_ocr=include_ocr)
+def capture_desktop_snapshot() -> DesktopSnapshot:
+    return desktop_state_collector.capture_desktop_snapshot()
 
 
 def list_visible_windows() -> list[WindowSnapshot]:

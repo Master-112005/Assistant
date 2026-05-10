@@ -4,6 +4,7 @@ Main application window.
 from __future__ import annotations
 
 import threading
+import time
 
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -142,21 +143,110 @@ class CommandWorker(QThread):
 
     def cancel(self) -> None:
         self._cancel_event.set()
+        self._cancel_processor_execution()
+
+    def _cancel_processor_execution(self) -> None:
+        engine = getattr(self.processor, "engine", None)
+        if engine is None or not hasattr(engine, "cancel"):
+            return
+        try:
+            engine.cancel()
+        except Exception as exc:
+            logger.debug("CommandWorker could not cancel processor engine: %s", exc)
+
+    def _resolve_base_timeout_seconds(self) -> float:
+        return max(1.0, float(settings.get("command_timeout_seconds") or 20))
+
+    def _resolve_active_timeout_seconds(self, base_timeout_seconds: float) -> float:
+        candidates = [
+            base_timeout_seconds,
+            float(settings.get("execution_timeout") or 45) + 5.0,
+            float(settings.get("confirmation_timeout_seconds") or 60) + 5.0,
+            float(settings.get("app_launch_timeout_seconds") or 30) + 5.0,
+            float(settings.get("close_app_timeout_seconds") or 25) + 5.0,
+            float(settings.get("browser_command_timeout_seconds") or 25) + 5.0,
+            float(settings.get("whatsapp_skill_timeout_seconds") or 120) + 5.0,
+        ]
+        return max(1.0, max(candidates))
+
+    @staticmethod
+    def _should_extend_wait() -> bool:
+        pending_confirmation = bool(getattr(state, "pending_confirmation", {}) or {})
+        pending_confirmations = bool(getattr(state, "pending_confirmations", {}) or {})
+        return bool(
+            state.is_executing
+            or state.current_plan_id
+            or pending_confirmation
+            or pending_confirmations
+        )
+
+    def _run_processor_with_timeout(self) -> tuple[str, object]:
+        result_holder: list[dict] = []
+        error_holder: list[BaseException] = []
+        finished = threading.Event()
+
+        def _runner() -> None:
+            try:
+                result_holder.append(self.processor.process(self.text, source=self.source))
+            except BaseException as exc:
+                error_holder.append(exc)
+            finally:
+                finished.set()
+
+        worker = threading.Thread(
+            target=_runner,
+            daemon=True,
+            name=f"assistant-command-{self.token}",
+        )
+        worker.start()
+
+        started_at = time.monotonic()
+        base_timeout_seconds = self._resolve_base_timeout_seconds()
+        active_timeout_seconds = self._resolve_active_timeout_seconds(base_timeout_seconds)
+        deadline = started_at + base_timeout_seconds
+        extended_wait = False
+
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            if finished.wait(timeout=min(0.05, remaining if remaining > 0.0 else 0.05)):
+                if error_holder:
+                    return "error", error_holder[0]
+                value = result_holder[0] if result_holder else {}
+                return "completed", value if isinstance(value, dict) else {}
+
+            if self._cancel_event.is_set():
+                self._cancel_processor_execution()
+                return "cancelled", None
+
+            now = time.monotonic()
+            if now < deadline:
+                continue
+
+            if not extended_wait and self._should_extend_wait():
+                extended_wait = True
+                deadline = max(deadline, started_at + active_timeout_seconds)
+                logger.info(
+                    "CommandWorker extending timeout for active execution",
+                    command=self.text,
+                    base_timeout_seconds=base_timeout_seconds,
+                    extended_timeout_seconds=active_timeout_seconds,
+                )
+                continue
+
+            self._cancel_processor_execution()
+            timeout_seconds = active_timeout_seconds if extended_wait else base_timeout_seconds
+            return "timed_out", timeout_seconds
 
     def run(self) -> None:
         try:
             self.state_changed.emit("EXECUTING")
-            timeout_seconds = float(settings.get("command_timeout_seconds") or 20)
-            outcome = invoke_with_timeout(
-                lambda: self.processor.process(self.text, source=self.source),
-                timeout_seconds=timeout_seconds,
-                cancel_event=self._cancel_event,
-            )
-            if outcome.cancelled:
+            status, payload = self._run_processor_with_timeout()
+            if status == "cancelled":
                 self.state_changed.emit("READY")
                 self.cancelled.emit(self.token)
                 return
-            if outcome.timed_out:
+            if status == "timed_out":
+                timeout_seconds = float(payload or self._resolve_base_timeout_seconds())
                 result = self.processor.handle_external_error(
                     {
                         "message": f"The command '{self.text}' timed out after {int(timeout_seconds)} seconds.",
@@ -183,13 +273,13 @@ class CommandWorker(QThread):
                 self.result_ready.emit(result, self.token)
                 self.state_changed.emit("READY")
                 return
-            if outcome.error is not None:
-                raise outcome.error
+            if status == "error":
+                raise payload
             if self._cancel_event.is_set():
                 self.state_changed.emit("READY")
                 self.cancelled.emit(self.token)
                 return
-            result = outcome.value if isinstance(outcome.value, dict) else {}
+            result = payload if isinstance(payload, dict) else {}
             self.result_ready.emit(result, self.token)
             self.state_changed.emit("READY")
         except Exception as exc:
@@ -1164,6 +1254,11 @@ class MainWindow(QMainWindow):
         result_data = result.get("data", {}) if isinstance(result, dict) else {}
         if not isinstance(result_data, dict):
             result_data = {}
+        response_text = str(result.get("message") or result.get("response") or "").strip() if isinstance(result, dict) else ""
+        if response_text and not bool(result_data.get("response_emitted")):
+            self.add_message("Assistant", response_text)
+            if bool(result_data.get("speak_response", True)):
+                self._queue_response_speech(response_text)
         if not bool(result_data.get("speak_response", True)):
             self._resume_listener_after_activity()
         if result_data.get("focus_text_input"):

@@ -22,8 +22,7 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 
-_OCR_PHRASES = {"read screen", "what is on screen", "what's on screen"}
-_CLICK_PREFIXES = ("click ", "press ", "tap ", "select ")
+_Click_PREFIXES = ("click ", "press ", "tap ", "select ")
 _SYSTEM_INTENTS = {
     "volume_up",
     "volume_down",
@@ -77,14 +76,63 @@ _FILE_INTENTS = {
     "file_action",
 }
 _COMMUNICATION_INTENTS = {"send_message", "call_contact"}
+_COMMUNICATION_PLATFORMS = {"whatsapp", "telegram"}
 _MULTI_ACTION_INTENTS = {"multi_action"}
 _REMINDER_INTENTS = {"reminder_create", "reminder_list", "reminder_delete", "reminder_enable", "reminder_disable"}
+
+
+def route(text: str, normalized_intent: str, entities: dict[str, Any]) -> str:
+    """
+    Main routing function with prioritized intent matching.
+    
+    CRITICAL: App commands should take priority over multi_action routing
+    when there's a clear single action. Multi-action commands should go
+    to the planner for proper execution sequencing.
+    """
+    lowered = text.lower()
+    
+    _APP_COMMAND_INTENTS = {
+        "open_app",
+        "close_app",
+        "minimize_app",
+        "maximize_app",
+        "focus_app",
+        "restore_app",
+        "toggle_app",
+    }
+    
+    intent_is_multi = normalized_intent in _MULTI_ACTION_INTENTS
+    
+    if intent_is_multi:
+        segments = re.split(r"\b(?:and|then|after that|afterwards|followed by)\b", text.lower())
+        
+        whatsapp_app_segment = None
+        whatsapp_message_segment = None
+        message_pattern = re.compile(r"(?:say|tell|send\s+message|message)\s+(\w+)\s+(.+)", re.IGNORECASE)
+        open_pattern = re.compile(r"open\s+(whatsapp|whatsapp\s+web)", re.IGNORECASE)
+        
+        for seg in segments:
+            seg_clean = seg.strip()
+            if open_pattern.search(seg_clean):
+                whatsapp_app_segment = seg_clean
+            elif message_pattern.search(seg_clean):
+                whatsapp_message_segment = seg_clean
+        
+        if whatsapp_app_segment or "whatsapp" in lowered:
+            return "whatsapp"
+    
+    if "whatsapp" in lowered and any(
+        pattern in lowered.lower() 
+        for pattern in ("say ", "tell ", "send ", "message ", "hi ", "hello ")
+    ):
+        return "whatsapp"
 
 # Apps that have dedicated skills/routes - these MUST go to their specific skill
 _DEDICATED_APP_ROUTES = {
     "whatsapp": "whatsapp",
     "youtube": "youtube",
     "spotify": "spotify",
+    "telegram": "telegram",
 }
 
 # Apps that are browsers - these go to browser skill
@@ -127,22 +175,24 @@ def route_command(intent: str, entities: dict[str, Any], text: str) -> str:
 
     route = "unknown"
 
-    # Priority 1: OCR
-    if normalized_intent in {"read_screen", "ocr"} or lowered in _OCR_PHRASES:
-        route = "ocr"
-
-    # Priority 2: Click
-    elif normalized_intent in {"click", "click_by_text"}:
-        route = "click" if lowered.startswith(_CLICK_PREFIXES) else "unknown"
+    # Priority 1: Click
+    if normalized_intent in {"click", "click_by_text"}:
+        route = "click" if lowered.startswith(_Click_PREFIXES) else "unknown"
 
     # Priority 3: System commands
     elif normalized_intent in _SYSTEM_INTENTS:
         route = "system"
 
     # Priority 4: Communication commands (MUST come before APP commands)
-    # This ensures "message hemanth" goes to WhatsApp, not launcher
+    # This ensures "message hemanth on whatsapp" goes to WhatsApp, not launcher
+    # Also handles telegram now
     elif normalized_intent in _COMMUNICATION_INTENTS:
-        route = "whatsapp"
+        # Check which platform - telegram or whatsapp
+        lowered = " ".join(str(text or "").strip().lower().split())
+        if "telegram" in lowered:
+            route = "telegram"
+        else:
+            route = "whatsapp"
 
     # Priority 5: App commands (open/close/minimize/etc.)
     elif normalized_intent in _APP_COMMAND_INTENTS:
@@ -169,8 +219,13 @@ def route_command(intent: str, entities: dict[str, Any], text: str) -> str:
         route = "planner"
 
     # Priority 11: WhatsApp fallback (check text for patterns)
-    elif route == "unknown" and "whatsapp" in lowered:
+    # BUT NOT if it's a multi_action - those must go to planner
+    elif route == "unknown" and "whatsapp" in lowered and normalized_intent not in _MULTI_ACTION_INTENTS:
         route = "whatsapp"
+
+    # Priority 12: Telegram fallback
+    elif route == "unknown" and "telegram" in lowered and normalized_intent not in _MULTI_ACTION_INTENTS:
+        route = "telegram"
 
     # Structured debug logging - output
     logger.debug(

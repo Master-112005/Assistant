@@ -55,6 +55,7 @@ agent-*
 *.swo
 *~
 .DS_Store
+/graphify-out
 
 # Logs
 *.log

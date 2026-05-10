@@ -4,8 +4,26 @@ import pytest
 
 from core import settings, state
 from core.click_text import TextClickEngine
-from core.ocr import OCRLine, OCRResult, OCRWord
 from core.screen import CaptureBounds
+
+# OCR removed - use mock classes
+class OCRLine:
+    def __init__(self, text="", confidence=0.9, bbox=(0,0,0,0), words=None):
+        self.text = text
+        self.confidence = confidence
+        self.bbox = bbox
+        self.words = words or []
+
+class OCRResult:
+    def __init__(self, lines=None, engine="mock"):
+        self.lines = lines or []
+        self.engine = engine
+
+class OCRWord:
+    def __init__(self, text="", confidence=0.9, bbox=(0,0,0,0)):
+        self.text = text
+        self.confidence = confidence
+        self.bbox = bbox
 
 
 class FakeWindow:

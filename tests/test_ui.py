@@ -44,6 +44,20 @@ class HungProcessor(SlowProcessor):
         return {"success": True, "intent": "search", "response": f"Processed {source}: {text}"}
 
 
+class ActiveExecutionProcessor(SlowProcessor):
+    def process(self, text: str, source: str = "text"):
+        from core import state
+
+        state.is_executing = True
+        state.current_plan_id = "test-plan"
+        try:
+            time.sleep(1.5)
+            return {"success": True, "intent": "multi_action", "response": f"Completed {source}: {text}"}
+        finally:
+            state.is_executing = False
+            state.current_plan_id = ""
+
+
 class ExplodingProcessor(SlowProcessor):
     def process(self, text: str, source: str = "text"):
         raise RuntimeError("backend boom")
@@ -309,6 +323,33 @@ def test_command_timeout_recovers_ui_state():
     assert _wait_for(lambda: window.status_indicator.label.text() in {"Error - Ready again", "Ready"}, timeout=2.5)
     assert _wait_for(lambda: window.text_input.isEnabled(), timeout=2.5)
     assert any("timed out" in text.lower() for _, text in window._message_history)
+
+    window.close()
+    settings.reset_defaults()
+
+
+def test_active_execution_extends_command_timeout():
+    settings.reset_defaults()
+    settings.set("command_timeout_seconds", 1)
+    settings.set("execution_timeout", 3)
+
+    app = _get_app()
+    tts = TTSStub()
+    window = MainWindow(
+        processor=ActiveExecutionProcessor(),
+        listener=ListenerStub(),
+        hotkey_mgr=HotkeyStub(),
+        stt_engine=STTStub(),
+        tts_engine=tts,
+    )
+    window.show()
+    app.processEvents()
+
+    window.text_input.setText("open whatsapp and say hi")
+    window.send_message()
+
+    assert _wait_for(lambda: any("Completed text: open whatsapp and say hi" in text for _, text in window._message_history), timeout=3.0)
+    assert not any("timed out" in text.lower() for _, text in window._message_history)
 
     window.close()
     settings.reset_defaults()

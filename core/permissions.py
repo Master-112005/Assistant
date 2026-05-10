@@ -478,8 +478,11 @@ class PermissionManager:
             return Decision.REQUIRE_CONFIRMATION
         if normalized_action in {"lock_pc"} and settings.get("confirm_lock"):
             return Decision.REQUIRE_CONFIRMATION
-        if normalized_action in {"send_message"} and settings.get("confirm_before_sending_message") and not settings.get("whatsapp_no_confirmation"):
-            return Decision.REQUIRE_CONFIRMATION
+        if normalized_action in {"send_message", "send_whatsapp_message"}:
+            if settings.get("whatsapp_no_confirmation"):
+                return Decision.ALLOW
+            if settings.get("confirm_before_sending_message"):
+                return Decision.REQUIRE_CONFIRMATION
         if normalized_action in {"delete_file", "permanent_delete", "delete_folder_many_files"} and settings.get("confirm_delete"):
             return Decision.REQUIRE_CONFIRMATION
         if params.get("overwrite") and settings.get("confirm_overwrite"):
@@ -518,13 +521,13 @@ class PermissionManager:
             "search": "Web searches are safe to auto-run.",
             "read_screen": "Reading the screen is safe.",
             "new_tab": "Opening a new tab is safe.",
+            "ocr": "OCR only reads visible content.",
             "pause_music": "Media pause is safe.",
             "play_music": "Media playback is safe.",
             "clipboard_history": "Reading clipboard history is safe.",
             "wait": "Waiting does not change system state.",
             "help": "Help is informational.",
             "time_query": "Time queries are informational.",
-            "ocr": "OCR only reads content.",
             "awareness": "Awareness only reads content.",
         }
         if action_name in safe_actions:
@@ -657,10 +660,10 @@ class PermissionManager:
         if app_name == "whatsapp" and operation in {"send", "send_message", "message"}:
             return "send_whatsapp_message", RiskLevel.MEDIUM, "Sending a message has external side effects.", "Send the WhatsApp message?"
         if operation in {"close", "close_app", "close_tab", "close_window"}:
-            return "close_app", RiskLevel.MEDIUM, "Closing an app or tab can disrupt user work.", "Close the active app or tab?"
+            return "close_app", RiskLevel.MEDIUM, "Closing an app or tab can disrupt user work.", "Want me to close it?"
         if operation in {"new_tab", "search", "open_result", "back", "forward", "refresh"}:
-            return operation, RiskLevel.SAFE, "This browser action is safe.", f"Run {operation.replace('_', ' ')}?"
-        return "app_action", RiskLevel.MEDIUM, "App actions can affect application state.", "Run the app action?"
+            return operation, RiskLevel.SAFE, "This browser action is safe.", f"Open a new {operation.replace('_', ' ')}?"
+        return "app_action", RiskLevel.MEDIUM, "App actions can affect application state.", "Run that action?"
 
     def _classify_plugin_action(self, action_name: str, params: dict[str, Any]) -> tuple[str, RiskLevel, str, str] | None:
         if action_name not in {"plugin_execute", "plugin_load", "plugin_enable"} and not action_name.startswith("plugin_"):
@@ -707,7 +710,6 @@ class PermissionManager:
             "chromeskill": ("browser_action", "Browser skill actions are safe by default."),
             "youtubeskill": ("youtube_action", "YouTube skill actions are safe by default."),
             "musicskill": ("music_action", "Media actions are safe by default."),
-            "ocrskill": ("read_screen", "OCR only reads content."),
             "awarenessskill": ("read_screen", "Awareness only reads content."),
             "clipboardskill": ("clipboard_history", "Clipboard history viewing is safe."),
             "reminderskill": ("reminder_action", "Reminder actions are safe."),

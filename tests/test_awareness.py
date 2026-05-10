@@ -7,8 +7,20 @@ from core import settings, state
 from core.awareness import ScreenAwarenessEngine
 from core.desktop_state import DesktopSnapshot, DesktopStateCollector
 from core.automation import WindowTarget
-from core.ocr import OCRLine, OCRResult
 from core.window_context import WindowInfo
+
+# OCR removed - use mock classes
+class OCRLine:
+    def __init__(self, text="", confidence=0.9, bbox=(0,0,0,0), words=None):
+        self.text = text
+        self.confidence = confidence
+        self.bbox = bbox
+        self.words = words or []
+
+class OCRResult:
+    def __init__(self, lines=None, engine="mock"):
+        self.lines = lines or []
+        self.engine = engine
 
 
 class FakeAutomation:

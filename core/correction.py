@@ -315,27 +315,56 @@ class STTCorrector:
         Returns:
             {"term": str, "score": int} or None
         """
+        if not word or len(word) < 2:
+            return None
+
         candidates = {}
 
-        # Collect all known terms
+        # Collect all known terms - use lower case for matching
         for term in list(self.vocab.get_all_apps().keys()):
-            candidates[term] = "app"
+            candidates[term.lower()] = "app"
         for term in list(self.vocab.get_all_verbs().keys()):
-            candidates[term] = "verb"
+            candidates[term.lower()] = "verb"
         for term in list(self.vocab.get_all_system_terms().keys()):
-            candidates[term] = "system"
+            candidates[term.lower()] = "system"
 
         # Also check custom terms
         for custom_term in self.vocab._custom_terms.keys():
-            candidates[custom_term] = "custom"
+            candidates[custom_term.lower()] = "custom"
 
+        # Add common contact names and variations
+        contact_names = ["hemanth", "hemant", "john", "jane", "bob", "alice", "mike", "sarah"]
+        for name in contact_names:
+            candidates[name] = "contact"
+
+        # Add common app names and their variations
+        common_apps = [
+            "whatsapp", "telegram", "discord", "teams", "slack", "zoom",
+            "spotify", "youtube", "chrome", "edge", "firefox",
+            "notepad", "calculator", "explorer", "vscode", "code"
+        ]
+        for app in common_apps:
+            if app not in candidates:
+                candidates[app] = "common_app"
+
+        word_lower = word.lower()
         best_match = None
         best_score = threshold
 
-        for candidate_term, _ in candidates.items():
-            score = fuzz.token_ratio(word, candidate_term)
+        for candidate_term, term_type in candidates.items():
+            # Skip exact matches - no need to correct
+            if word_lower == candidate_term:
+                continue
 
-            if score > best_score:
+            # Use partial ratio for better handling of substrings
+            score = fuzz.token_ratio(word_lower, candidate_term)
+
+            # For short words, use a lower threshold
+            if len(word_lower) <= 4 and score >= threshold - 10:
+                if score > best_score:
+                    best_score = score
+                    best_match = candidate_term
+            elif score > best_score:
                 best_score = score
                 best_match = candidate_term
 

@@ -89,12 +89,19 @@ APP_PROFILES: dict[str, AppProfile] = {
     "whatsapp": AppProfile(
         app_id="whatsapp",
         display_name="WhatsApp",
-        aliases=("whatsapp", "whatsapp desktop", "wahtsapp", "watsapp"),
+        aliases=("whatsapp", "whatsapp desktop", "wahtsapp", "watsapp", "whatssap"),
         process_names=("whatsapp.exe", "whatsapp.root.exe"),
         known_paths=(
             r"%LocalAppData%\WhatsApp\WhatsApp.exe",
             r"%ProgramFiles%\WindowsApps\5319275A.WhatsAppDesktop_*",
         ),
+    ),
+    "instagram": AppProfile(
+        app_id="instagram",
+        display_name="Instagram",
+        aliases=("instagram", "insta", "ig"),
+        process_names=("msedge.exe",),
+        known_paths=(),
     ),
     "vscode": AppProfile(
         app_id="vscode",
@@ -171,6 +178,13 @@ WEBSITE_ALIASES: dict[str, str] = {
     "claude": "https://claude.ai",
     "netflix": "https://www.netflix.com",
     "outlook": "https://outlook.live.com",
+    "instagram": "https://www.instagram.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "youtube": "https://www.youtube.com",
+    "spotify": "https://open.spotify.com",
+    "twitter": "https://twitter.com",
+    "facebook": "https://www.facebook.com",
+    "linkedin": "https://www.linkedin.com",
 }
 WEBSITE_ALIASES.update(get_web_aliases())
 
@@ -184,6 +198,12 @@ WEBSITE_DISPLAY_NAMES: dict[str, str] = {
     "claude": "Claude",
     "netflix": "Netflix",
     "outlook": "Outlook",
+    "instagram": "Instagram",
+    "insta": "Instagram",
+    "whatsapp": "WhatsApp",
+    "twitter": "Twitter",
+    "facebook": "Facebook",
+    "linkedin": "LinkedIn",
 }
 _LIKELY_WEB_TLDS = {"ai", "app", "co", "com", "dev", "gg", "in", "io", "me", "net", "org", "tv"}
 _FILE_EXTENSION_RE = re.compile(

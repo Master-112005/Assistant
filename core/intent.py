@@ -155,6 +155,18 @@ class IntentDetector:
         if multi_action is not None:
             return multi_action
 
+        # Check media intents directly before the complex priority scoring
+        media_result = self._match_media_intent(normalized)
+        if media_result is not None:
+            return IntentResult(
+                intent=media_result[0],
+                confidence=media_result[1],
+                cleaned_text=normalized,
+                original_text=original_text,
+                entities={},
+                matched_rules=media_result[2],
+            )
+
         priority_result = self._resolve_priority_intent(original_text, normalized, context_data)
         if priority_result is not None:
             return priority_result
@@ -188,97 +200,40 @@ class IntentDetector:
 
     def _match_rules(self, text: str) -> tuple[IntentType, float, list[str]] | None:
         lowered = text.lower()
-
-        if lowered in {"do the same thing", "do that again", "same thing again", "repeat that", "repeat last command"}:
-            return IntentType.REPEAT_LAST_COMMAND, 0.98, ["rule:repeat_last_command"]
-
-        if lowered.startswith(("how are you", "howr you", "how do you do")):
-            return IntentType.QUESTION, 0.95, ["rule:status_question"]
-
-        browser_command = None if looks_like_open_file_request(lowered) else parse_browser_command(lowered)
-        if browser_command is not None and browser_command.explicit_browser and self._should_prefer_browser_command(lowered, browser_command):
-            browser_intent = {
-                "new_tab": (IntentType.BROWSER_TAB_NEW, 0.99, ["rule:browser_new_tab"]),
-                "close_tab": (IntentType.BROWSER_TAB_CLOSE, 0.99, ["rule:browser_close_tab"]),
-                "next_tab": (IntentType.BROWSER_TAB_NEXT, 0.99, ["rule:browser_next_tab"]),
-                "previous_tab": (IntentType.BROWSER_TAB_PREVIOUS, 0.99, ["rule:browser_previous_tab"]),
-                "switch_tab": (IntentType.BROWSER_TAB_SWITCH, 0.99, ["rule:browser_switch_tab"]),
-                "go_back": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_back"]),
-                "go_forward": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_forward"]),
-                "refresh": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_refresh"]),
-                "home": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_home"]),
-                "scroll_down": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_scroll_down"]),
-                "scroll_up": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_scroll_up"]),
-                "read_page_title": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_read_page_title"]),
-                "read_page": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_read_page"]),
-                "copy_page_url": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_copy_page_url"]),
-                "open_url": (IntentType.OPEN_WEBSITE, 0.97, ["rule:open_website_browser"]),
-                "search": (IntentType.SEARCH_WEB, 0.95, ["rule:search_web_browser"]),
-                "launch_browser": (IntentType.OPEN_APP, 0.96, ["rule:open_browser"]),
-                "close_browser": (IntentType.CLOSE_APP, 0.96, ["rule:close_browser"]),
-            }.get(browser_command.action)
-            if browser_intent is not None:
-                return browser_intent
-
-        app_command = parse_app_command(lowered)
-        if app_command is not None:
-            mapped_intent = {
-                "open_app": IntentType.OPEN_APP,
-                "close_app": IntentType.CLOSE_APP,
-                "minimize_app": IntentType.MINIMIZE_APP,
-                "maximize_app": IntentType.MAXIMIZE_APP,
-                "focus_app": IntentType.FOCUS_APP,
-                "restore_app": IntentType.RESTORE_APP,
-                "toggle_app": IntentType.TOGGLE_APP,
-            }.get(app_command.intent)
-            if mapped_intent is not None:
-                return mapped_intent, max(0.93, float(app_command.confidence)), [f"rule:{app_command.intent}"]
-
-        if browser_command is not None and self._should_prefer_browser_command(lowered, browser_command):
-            browser_intent = {
-                "new_tab": (IntentType.BROWSER_TAB_NEW, 0.99, ["rule:browser_new_tab"]),
-                "close_tab": (IntentType.BROWSER_TAB_CLOSE, 0.99, ["rule:browser_close_tab"]),
-                "next_tab": (IntentType.BROWSER_TAB_NEXT, 0.99, ["rule:browser_next_tab"]),
-                "previous_tab": (IntentType.BROWSER_TAB_PREVIOUS, 0.99, ["rule:browser_previous_tab"]),
-                "switch_tab": (IntentType.BROWSER_TAB_SWITCH, 0.99, ["rule:browser_switch_tab"]),
-                "go_back": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_back"]),
-                "go_forward": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_forward"]),
-                "refresh": (IntentType.BROWSER_ACTION, 0.98, ["rule:browser_refresh"]),
-                "home": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_home"]),
-                "scroll_down": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_scroll_down"]),
-                "scroll_up": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_scroll_up"]),
-                "read_page_title": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_read_page_title"]),
-                "read_page": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_read_page"]),
-                "copy_page_url": (IntentType.BROWSER_ACTION, 0.97, ["rule:browser_copy_page_url"]),
-                "open_url": (IntentType.OPEN_WEBSITE, 0.97, ["rule:open_website_browser"]),
-                "search": (IntentType.SEARCH_WEB, 0.95, ["rule:search_web_browser"]),
-                "launch_browser": (IntentType.OPEN_APP, 0.96, ["rule:open_browser"]),
-                "close_browser": (IntentType.CLOSE_APP, 0.96, ["rule:close_browser"]),
-            }.get(browser_command.action)
-            if browser_intent is not None:
-                return browser_intent
-
-        if lowered in {"close tab", "close current tab", "close this tab"}:
-            return IntentType.BROWSER_TAB_CLOSE, 0.99, ["rule:browser_close_tab"]
-        if lowered in {"next tab", "go to next tab", "switch to next tab"}:
-            return IntentType.BROWSER_TAB_NEXT, 0.99, ["rule:browser_next_tab"]
-        if lowered in {"previous tab", "prev tab", "go to previous tab", "switch to previous tab"}:
-            return IntentType.BROWSER_TAB_PREVIOUS, 0.99, ["rule:browser_previous_tab"]
-
-        system_intent = self._match_system_intent(lowered)
-        if system_intent is not None:
-            return system_intent
-
-        if self._looks_like_reminder_command(lowered):
-            return IntentType.REMINDER_CREATE, 0.97, ["rule:reminder_create"]
-
-        if lowered in {"clipboard", "what is on clipboard", "what's on clipboard", "clipboard history", "show clipboard"}:
-            return IntentType.CLIPBOARD_QUERY, 0.97, ["rule:clipboard_query"]
+        
+        # Multi-action detection: commands like "open X and say Y to Z"
+        # Check for explicit connectors first
+        has_connector = any(indicator in lowered for indicator in (" and ", " then ", " afterwards", " followed by"))
+        
+        # Also check for implicit multi-action: "open X say Y" (without "and")
+        has_implicit_multi = False
+        if not has_connector:
+            open_match = re.match(r"^open\s+\w+\s+(\w+)\s+", lowered)
+            if open_match:
+                second_word = open_match.group(1)
+                if second_word in ("say", "tell", "send", "message", "hi", "hello", "call"):
+                    has_implicit_multi = True
+        
+        if has_connector:
+            connected_parts = re.split(r"\b(?:and|then|after that|afterwards|followed by)\b", lowered)
+            if len(connected_parts) >= 2:
+                has_open = any(p.strip().startswith("open ") for p in connected_parts)
+                has_message = any(
+                    any(m in p for m in ("say ", "tell ", "send ", "message ", "hi ", "hello "))
+                    for p in connected_parts
+                )
+                if has_open and has_message:
+                    return IntentType.MULTI_ACTION, 0.78, ["rule:multi_action"]
+        elif has_implicit_multi:
+            return IntentType.MULTI_ACTION, 0.78, ["rule:multi_action"]
 
         # CRITICAL: Check "open X" commands BEFORE communication commands
         # This ensures "open whatsapp" routes to OPEN_APP not SEND_MESSAGE
         if lowered.startswith("open "):
             target = lowered[5:].strip()
+            # WhatsApp should ALWAYS be treated as an app, not a website
+            if target in ("whatsapp", "whatsapp web"):
+                return IntentType.OPEN_APP, 0.98, ["rule:open_app_whatsapp"]
             if target and is_known_website(target):
                 return IntentType.OPEN_WEBSITE, 0.97, ["rule:open_website"]
             if self._looks_like_file_target(target):
@@ -287,40 +242,45 @@ class IntentDetector:
 
         # WhatsApp message commands - explicit routing for WhatsApp skill
         # Only match if NOT an "open" command (already handled above)
-        if lowered.startswith(("message ", "msg ", "text ", "send ", "tell ", "say ")) or "whatsapp" in lowered:
+        if lowered.startswith(("message ", "msg ", "text ", "send ", "tell ", "say ")) or "whatsapp" in lowered or "telegram" in lowered:
             if "whatsapp" in lowered or any(name in lowered for name in ("hemant", "hemanth")):
                 return IntentType.SEND_MESSAGE, 0.96, ["rule:send_message_whatsapp"]
             return IntentType.SEND_MESSAGE, 0.95, ["rule:send_message"]
 
-        # WhatsApp call commands
-        if lowered.startswith(("call ", "ring ", "dial ")) or ("whatsapp" in lowered and "call" in lowered):
-            if "whatsapp" in lowered or "video" in lowered:
+        # WhatsApp/Telegram call commands
+        if lowered.startswith(("call ", "ring ", "dial ")) or (("whatsapp" in lowered or "telegram" in lowered) and "call" in lowered):
+            if "whatsapp" in lowered or "telegram" in lowered or "video" in lowered:
                 return IntentType.CALL_CONTACT, 0.96, ["rule:call_contact_whatsapp"]
             return IntentType.CALL_CONTACT, 0.95, ["rule:call_contact"]
 
-        if lowered.startswith("close "):
+        if lowered.startswith(("close ", "quit ", "exit ", "terminate ", "kill ")):
             return IntentType.CLOSE_APP, 0.96, ["rule:close_app"]
 
-        if lowered.startswith("minimize "):
+        if lowered.startswith(("minimize ", "hide ", "send to tray ", "minimise ", "minimise ")):
+            # Handle "minimize window" / "minimize this" - treat as minimize current app
+            if lowered in {"minimize", "minimize window", "minimize this", "minimise window", 
+                           "hide window", "hide this", "hide current window", "minimise this"}:
+                return IntentType.MINIMIZE_APP, 0.85, ["rule:minimize_app"]
             return IntentType.MINIMIZE_APP, 0.96, ["rule:minimize_app"]
 
-        if lowered.startswith("maximize "):
+        if lowered.startswith(("maximize ", "expand ", "enlarge ", "fullscreen ", "maximise ")):
             return IntentType.MAXIMIZE_APP, 0.96, ["rule:maximize_app"]
 
-        if lowered.startswith(("focus ", "switch to ", "activate ", "bring to front ")):
+        if lowered.startswith(("focus ", "switch to ", "activate ", "bring to front ", "bring forward ", "select ")):
             return IntentType.FOCUS_APP, 0.94, ["rule:focus_app"]
 
-        if lowered.startswith("restore ") and "clipboard" not in lowered:
+        if lowered.startswith(("restore ", "unminimize ", "show ", "bring back ")) and "clipboard" not in lowered:
             return IntentType.RESTORE_APP, 0.95, ["rule:restore_app"]
 
-        if lowered.startswith("toggle "):
+        if lowered.startswith(("toggle ", "flip ", "switch ")):
             return IntentType.TOGGLE_APP, 0.93, ["rule:toggle_app"]
 
-        if lowered.startswith(("search ", "search for ", "google ", "look up ", "lookup ")):
+        if lowered.startswith(("search ", "search for ", "google ", "look up ", "lookup ", "find info ", "find about ")):
             if looks_like_search_file_request(lowered):
                 return IntentType.SEARCH_FILE, 0.92, ["rule:search_file"]
             return IntentType.SEARCH_WEB, 0.95, ["rule:search_web"]
 
+        # Look for something (web search)
         if lowered.startswith("find "):
             if looks_like_search_file_request(lowered):
                 return IntentType.SEARCH_FILE, 0.93, ["rule:search_file_find"]
@@ -334,12 +294,17 @@ class IntentDetector:
         if re.match(r"^(take\s+)?(a\s+)?screenshot|capture\s+screen|screen\s+capture", lowered):
             return IntentType.SYSTEM_CONTROL, 0.90, ["rule:screenshot"]
         
-        # Calculator commands
-        if re.match(r"^(calc|calculator|compute|calculate)\s+", lowered):
+        # Calculator commands - more natural variations
+        if re.match(r"^(calc|calculator|compute|calculate|do a calculation)\s+", lowered):
             return IntentType.OPEN_APP, 0.95, ["rule:calculator"]
         
-        # Settings commands
-        if lowered in {"open settings", "open preferences", "open config", "settings", "preferences"}:
+        # Settings commands - more natural variations
+        settings_patterns = {
+            "open settings", "open preferences", "open config", "settings", "preferences",
+            "open system settings", "open control panel", "open windows settings",
+            "system settings", "app settings",
+        }
+        if lowered in settings_patterns or re.match(r"(open|show|go to)\s+(the\s+)?(system\s+)?(windows\s+)?settings", lowered):
             return IntentType.OPEN_APP, 0.95, ["rule:settings"]
         
         # Weather query
@@ -384,10 +349,23 @@ class IntentDetector:
 
         # Greeting detection - be permissive for casual speech
         # Matches: "hi", "hi ra", "hello", "hello there", "hey", "hey buddy", etc.
-        if re.match(r"^(hi+|hello+|hey+|yo+)(\s+\w+)?$", lowered):
+        # Also includes "good morning" variations
+        if re.match(r"^(hi+|hello+|hey+|yo+|hiya+|howdy+|sup+|g'?day+)(\s+\w+)*$", lowered):
             return IntentType.GREETING, 0.95, ["rule:greeting"]
-        if lowered in {"help", "what can you do", "show commands", "commands"}:
+
+        # Good morning/evening/afternoon - treat as greeting
+        if re.match(r"^good\s+(morning|afternoon|evening)(\s+\w+)*$", lowered):
+            return IntentType.GREETING, 0.95, ["rule:greeting"]
+        
+        # Help commands - more natural variations
+        help_patterns = {
+            "help", "what can you do", "show commands", "commands", "what all can you do",
+            "how does this work", "what are your commands", "show me what you can do",
+            "capabilities", "what are you capable of", "what can u do",
+        }
+        if lowered in help_patterns or lowered.startswith(("help ", "help me")):
             return IntentType.HELP, 0.98, ["rule:help"]
+        
         if re.match(r"^(?:what|who|where|why|when|how)\b", lowered):
             return IntentType.QUESTION, 0.88, ["rule:question"]
 
@@ -407,12 +385,22 @@ class IntentDetector:
         if re.match(r"(latest\s+)?news|news\s+((today|latest|breaking))", lowered):
             return IntentType.SEARCH_WEB, 0.90, ["rule:news_query"]
         
-        # Time query  
-        if lowered in {"what time is it", "tell me the time", "current time", "time now", "what's the time"}:
+        # Time query - more natural variations
+        time_patterns = {
+            "what time is it", "tell me the time", "current time", "time now", "what's the time",
+            "what time is it now", "do you know what time it is", "check the time",
+            "give me the time", "time please", "what time do we have",
+        }
+        if lowered in time_patterns or re.match(r"what time.*", lowered):
             return IntentType.QUESTION, 0.95, ["rule:time_query"]
         
-        # Date query
-        if lowered in {"what date is it", "what day is it", "today's date", "current date"}:
+        # Date query - more natural variations
+        date_patterns = {
+            "what date is it", "what day is it", "today's date", "current date",
+            "what day is today", "what's today's date", "what is today's date",
+            "which day is it", "day today",
+        }
+        if lowered in date_patterns or re.match(r"(what day|what date|today'?s?).*", lowered):
             return IntentType.QUESTION, 0.95, ["rule:date_query"]
         
         # Screenshot save location
@@ -535,14 +523,56 @@ class IntentDetector:
 
     def _match_media_intent(self, text: str) -> tuple[IntentType, float, list[str]] | None:
         text_l = " ".join(text.split())
-        if text_l in {"pause", "pause media", "pause music", "pause song", "pause track", "pause playback"}:
-            return IntentType.PAUSE_MEDIA, 0.92, ["rule:pause_media"]
-        if text_l in {"next", "next one", "next track", "next song", "skip", "skip song", "skip track", "skip one"}:
-            return IntentType.NEXT_TRACK, 0.92, ["rule:next_track"]
-        if text_l in {"previous", "previous one", "previous track", "previous song", "last track", "back track", "skip back"}:
-            return IntentType.PREVIOUS_TRACK, 0.92, ["rule:previous_track"]
-        if text_l in {"play", "play media", "play music", "play song", "play track", "resume", "resume media", "resume video", "resume playback", "continue playback"}:
+        
+        # Exact matches
+        play_patterns_exact = {
+            "play", "play media", "play music", "play song", "play track", "play video",
+            "resume", "resume media", "resume video", "resume playback", "continue playback",
+            "turn on music", "turn on spotify", "start music", "start playing",
+            "play some music", "play some songs", "put on music", "put on a song",
+            "hit play", "press play", "unpause", "play something",
+        }
+        if text_l in play_patterns_exact:
             return IntentType.PLAY_MEDIA, 0.92, ["rule:play_media"]
+        
+        # Starts with patterns (including normalized forms)
+        play_starts = ("play ", "put on ", "start playing", "start music", "play some")
+        if any(text_l.startswith(p) for p in play_starts):
+            return IntentType.PLAY_MEDIA, 0.92, ["rule:play_media"]
+
+        pause_patterns_exact = {
+            "pause", "pause media", "pause music", "pause song", "pause track", "pause playback", "pause video",
+            "stop", "stop playing", "stop music", "stop the music",
+            "turn off music", "turn off spotify", "mute music",
+            "kill music", "end music",
+        }
+        if text_l in pause_patterns_exact:
+            return IntentType.PAUSE_MEDIA, 0.92, ["rule:pause_media"]
+        
+        # Handle normalized forms: "stop play" -> pause_media
+        if text_l in {"stop play", "pause play"}:
+            return IntentType.PAUSE_MEDIA, 0.92, ["rule:pause_media"]
+        
+        pause_starts = ("stop ", "turn off ", "kill ", "end ")
+        if any(text_l.startswith(p) for p in pause_starts):
+            return IntentType.PAUSE_MEDIA, 0.92, ["rule:pause_media"]
+
+        next_patterns = {
+            "next", "next one", "next track", "next song", "next video",
+            "skip", "skip song", "skip track", "skip one", "skip this",
+            "next one please", "skip this song",
+        }
+        if text_l in next_patterns or text_l.startswith("skip "):
+            return IntentType.NEXT_TRACK, 0.92, ["rule:next_track"]
+
+        prev_patterns = {
+            "previous", "previous one", "previous track", "previous song", "previous video",
+            "last track", "last song", "back track", "skip back", "go back",
+            "last one", "previous one please",
+        }
+        if text_l in prev_patterns or text_l.startswith(("go back ", "last ")):
+            return IntentType.PREVIOUS_TRACK, 0.92, ["rule:previous_track"]
+
         return None
 
     def _resolve_priority_intent(
@@ -777,11 +807,11 @@ class IntentDetector:
         if (media_candidate and media_candidate["score"] >= 0.72) or (file_candidate and file_candidate["score"] >= 0.72):
             return None
 
-        prompt = "Do you want me to continue media playback or open a file?"
+        prompt = "Should I keep playing media or open a file?"
         if file_candidate and not media_candidate:
-            prompt = "Which file should I open?"
+            prompt = "Which file were you looking for?"
         elif media_candidate and not file_candidate:
-            prompt = "Do you want me to continue media playback?"
+            prompt = "Should I keep playing?"
 
         return {
             "name": "clarify",
@@ -799,11 +829,11 @@ class IntentDetector:
         candidate_scores: dict[str, float],
         context: dict[str, Any],
     ) -> IntentResult:
-        prompt = "Do you mean media playback or a file command?"
+        prompt = "Did you mean playing music or a file?"
         if candidate_scores.get("file_search", 0.0) > candidate_scores.get("media_resume", 0.0):
-            prompt = "Do you want me to open or search for a file?"
+            prompt = "Did you want to open something or search for it?"
         elif candidate_scores.get("media_resume", 0.0) > candidate_scores.get("file_search", 0.0):
-            prompt = "Do you want me to continue playback?"
+            prompt = "Should I continue playing?"
 
         return IntentResult(
             intent=IntentType.UNKNOWN,
@@ -890,9 +920,13 @@ class IntentDetector:
         connectors = re.findall(r"\b(and|then|after that|afterwards|followed by)\b", normalized_text)
         if not connectors:
             return None
-        action_markers = (
+        
+        supported_actions = (
             "open",
             "close",
+            "launch",
+            "start",
+            "run",
             "minimize",
             "maximize",
             "focus",
@@ -911,23 +945,51 @@ class IntentDetector:
             "pause",
             "next",
             "previous",
+            "send",
+            "say",
+            "tell",
+            "message",
+            "message",
+            "call",
+            "type",
+            "click",
+            "press",
         )
-        verb_matches = sum(1 for marker in action_markers if marker in normalized_text)
-        if verb_matches < 2:
-            return None
+        
+        normalized_lower = normalized_text.lower()
+        
+        known_apps = ("whatsapp", "youtube", "spotify", "chrome", "browser", "vscode", "file explorer", "notepad", "terminal")
+        has_app_action = any(f"{app} " in normalized_lower for app in known_apps)
+        
+        action_markers = supported_actions
+        verb_matches = sum(1 for marker in action_markers if marker in normalized_lower)
+        
+        has_separate_actions = False
         segments = [
             segment.strip()
             for segment in re.split(r"\b(?:and|then|after that|afterwards|followed by)\b", normalized_text)
             if segment.strip()
         ]
-        return IntentResult(
-            intent=IntentType.MULTI_ACTION,
-            confidence=0.72,
-            cleaned_text=normalized_text,
-            original_text=original_text,
-            entities={"segments": segments, "connector_count": len(connectors)},
-            matched_rules=["rule:multi_action"],
-        )
+        
+        if len(segments) >= 2:
+            for seg in segments:
+                seg_lower = seg.lower().strip()
+                if any(marker in seg_lower for marker in supported_actions):
+                    has_separate_actions = True
+                    break
+        
+        if verb_matches < 2 and not (has_app_action and has_separate_actions):
+            return None
+            
+        if verb_matches >= 2 or has_separate_actions:
+            return IntentResult(
+                intent=IntentType.MULTI_ACTION,
+                confidence=0.78,
+                cleaned_text=normalized_text,
+                original_text=original_text,
+                entities={"segments": segments, "connector_count": len(connectors)},
+                matched_rules=["rule:multi_action"],
+            )
 
     @staticmethod
     def _should_prefer_browser_command(text: str, browser_command) -> bool:

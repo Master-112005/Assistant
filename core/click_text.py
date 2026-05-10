@@ -1,5 +1,5 @@
 """
-Text-driven click automation built on top of OCR and desktop automation.
+Text-driven click automation using UIA-based text detection.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from PIL import Image
 from core import settings, state
 from core.automation import DesktopAutomation
 from core.logger import get_logger
-from core.ocr import OCREngine, OCRLine, OCRResult, OCRWord, get_ocr_engine
 from core.screen import CaptureBounds, ScreenCapture
 
 logger = get_logger(__name__)
@@ -122,15 +121,13 @@ class TextClickEngine:
     def __init__(
         self,
         *,
-        ocr_engine: OCREngine | None = None,
         automation: DesktopAutomation | None = None,
         capture: ScreenCapture | None = None,
     ) -> None:
-        self._ocr = ocr_engine or get_ocr_engine()
         self._automation = automation or DesktopAutomation()
         self._capture = capture or ScreenCapture()
         self._lock = threading.RLock()
-        self._cached_result: OCRResult | None = None
+        self._cached_result: Any = None
         self._cached_capture_mode: str = ""
         self._cached_at: float = 0.0
         self._click_history: list[tuple[float, str, int, int]] = []
@@ -140,14 +137,12 @@ class TextClickEngine:
         query = self.normalize_text(target_text)
         if not query:
             return []
-
-        if image is not None:
-            result = self._ocr.read_image(image, capture_mode="image")
-        else:
-            result = self._capture_result(force_refresh=False)
-        if not result.words and not result.lines:
+        
+        # Use screen capture and UIA for text detection
+        result = self._capture_result(force_refresh=False)
+        if not result:
             return []
-        return self.rank_targets(query, self._build_targets(result))
+        return self.rank_targets(query, self._build_targets_from_capture(result))
 
     def rank_targets(self, target_text: str, candidates: Iterable[TextTarget]) -> list[TextTarget]:
         query = self.normalize_text(target_text)
@@ -393,12 +388,48 @@ class TextClickEngine:
             ):
                 return self._cached_result
 
-        result = self._ocr.read_capture_mode(capture_mode)
+        # Use screen capture directly without OCR
+        capture = self._capture
+        if capture_mode == "active_window":
+            result = capture.capture_active_window()
+        elif capture_mode == "full_screen":
+            result = capture.capture_full_screen()
+        else:
+            result = capture.capture_active_window()
+        
         with self._lock:
             self._cached_result = result
             self._cached_capture_mode = capture_mode
             self._cached_at = time.monotonic()
         return result
+    
+    def _build_targets_from_capture(self, result: Any) -> list[TextTarget]:
+        """Build targets from screen capture using UIA."""
+        targets = []
+        if not result:
+            return targets
+        
+        # Use UIA to get text from screen
+        try:
+            automation = self._automation
+            windows = automation.get_all_windows()
+            for window in windows:
+                if window.title:
+                    targets.append(TextTarget(
+                        text=window.title,
+                        normalized_text=self.normalize_text(window.title),
+                        confidence=0.8,
+                        bbox=(window.rect.left, window.rect.top, window.rect.right, window.rect.bottom),
+                        center_x=(window.rect.left + window.rect.right) // 2,
+                        center_y=(window.rect.top + window.rect.bottom) // 2,
+                        source_engine="uia",
+                        match_score=0.0,
+                        source_kind="window_title",
+                    ))
+        except Exception:
+            pass
+        
+        return targets
 
     def _snapshot_from_result(self, result: OCRResult) -> _VerificationSnapshot:
         foreground_hwnd = self._automation.get_foreground_window()
@@ -414,32 +445,40 @@ class TextClickEngine:
             result=result,
         )
 
-    def _build_targets(self, result: OCRResult) -> list[TextTarget]:
+    def _build_targets(self, result: Any) -> list[TextTarget]:
+        """Build targets from capture result using UIA."""
         targets: list[TextTarget] = []
         seen: set[tuple[str, tuple[int, int, int, int]]] = set()
 
-        for item, kind in self._iter_result_items(result):
-            text = str(item.text or "").strip()
-            normalized = self.normalize_text(text)
-            bbox = tuple(int(value) for value in item.bbox)
-            key = (normalized, bbox)
-            if not normalized or key in seen or not self._is_valid_bbox(bbox):
-                continue
-            seen.add(key)
-            center_x, center_y = self.compute_click_point(bbox)
-            targets.append(
-                TextTarget(
-                    text=text,
-                    normalized_text=normalized,
-                    confidence=max(0.0, min(1.0, float(item.confidence))),
-                    bbox=bbox,
-                    center_x=center_x,
-                    center_y=center_y,
-                    source_engine=result.engine,
-                    source_kind=kind,
-                    details={"capture_mode": result.capture_mode},
+        # Use UIA to get text elements
+        try:
+            windows = self._automation.get_all_windows()
+            for window in windows:
+                if not window.title:
+                    continue
+                text = window.title.strip()
+                normalized = self.normalize_text(text)
+                bbox = (window.rect.left, window.rect.top, window.rect.right, window.rect.bottom)
+                key = (normalized, bbox)
+                if not normalized or key in seen or not self._is_valid_bbox(bbox):
+                    continue
+                seen.add(key)
+                center_x, center_y = self.compute_click_point(bbox)
+                targets.append(
+                    TextTarget(
+                        text=text,
+                        normalized_text=normalized,
+                        confidence=0.8,
+                        bbox=bbox,
+                        center_x=center_x,
+                        center_y=center_y,
+                        source_engine="uia",
+                        source_kind=kind,
+                        details={"capture_mode": result.capture_mode},
+                    )
                 )
-            )
+        except Exception:
+            pass
         return targets
 
     @staticmethod
@@ -609,7 +648,7 @@ class TextClickEngine:
 
     @staticmethod
     def _capture_mode() -> str:
-        return str(settings.get("ocr_capture_mode") or "active_window").strip().lower()
+        return str(settings.get("screen_capture_mode") or "active_window").strip().lower()
 
     def _build_failure(
         self,

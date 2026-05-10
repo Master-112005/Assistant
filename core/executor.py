@@ -233,11 +233,15 @@ class ExecutionEngine:
         """
         step_result = StepResult(step_id=step.id)
 
-        # Extended timeouts for slow operations
-        if step.action.value == "open_app":
+        action_value = step.action.value
+        target_app = str(step.params.get("target_app") or step.params.get("app") or "").lower()
+        
+        if action_value == "open_app":
             timeout = float(settings.get("app_launch_timeout_seconds") or 30)
-        elif step.action.value == "system_control" and str(step.params.get("control", "")).lower() in {"shutdown", "restart"}:
+        elif action_value == "system_control" and str(step.params.get("control", "")).lower() in {"shutdown", "restart"}:
             timeout = float(settings.get("close_app_timeout_seconds") or 40)
+        elif action_value == "send_message" and target_app == "whatsapp":
+            timeout = float(settings.get("whatsapp_message_timeout_seconds") or 90)
         else:
             timeout = float(settings.get("execution_timeout") or 60)
 
@@ -281,11 +285,22 @@ class ExecutionEngine:
         t.join(timeout=float(timeout))
 
         if t.is_alive():
-            # Thread is still running → timeout
-            msg = f"Step timed out after {timeout}s"
-            step_result.mark_failed(error="timeout", message=msg)
-            logger.error("Step %s TIMEOUT after %ds", step.id, timeout)
-            return step_result
+            logger.warning("Step %s TIMEOUT after %ds - checking for background completion", step.id, timeout)
+            
+            timeout_threshold = 15
+            if time.time() - step_result.started_at > timeout_threshold:
+                time.sleep(2)
+                if dispatch_result_holder:
+                    logger.info("Step %s completed after timeout window", step.id)
+                elif dispatch_error_holder:
+                    exc_str = dispatch_error_holder[0]
+                    step_result.mark_failed(error=exc_str, message=f"Error: {exc_str}")
+                    return step_result
+            
+            if not dispatch_result_holder:
+                step_result.mark_failed(error="timeout", message="That took a bit too long.")
+                logger.error("Step %s TIMEOUT after %ds", step.id, timeout)
+                return step_result
 
         if dispatch_error_holder:
             exc_str = dispatch_error_holder[0]
@@ -356,6 +371,8 @@ class ExecutionEngine:
 
         if action == ActionType.OPEN_APP:
             return self._handle_open_app(step)
+        if action == ActionType.CLOSE_APP:
+            return self._handle_close_app(step)
         if action == ActionType.SEARCH:
             return self._handle_search(step)
         if action == ActionType.APP_ACTION:
@@ -374,6 +391,8 @@ class ExecutionEngine:
             return self._handle_type(step)
         if action == ActionType.ASK_USER:
             return self._handle_ask_user(step)
+        if action == ActionType.SEND_MESSAGE:
+            return self._handle_send_message(step)
         if action == ActionType.UNKNOWN:
             return self._handle_unknown(step)
 
@@ -496,17 +515,23 @@ class ExecutionEngine:
 
     def _handle_open_app(self, step: PlanStep) -> Dict[str, Any]:
         """Launch a desktop app or known website and return result immediately without heavy verification."""
-        from core.app_launcher import app_display_name, website_url_for
+        from core.app_launcher import APP_PROFILES, app_display_name, canonicalize_app_name, website_url_for
 
         app_name = (step.target or "").strip()
         if not app_name:
             return _fail("No application name provided.", "empty_target")
 
         action_started = time.perf_counter()
+        
+        # Check if there's a local app profile - prefer local app over website
+        canonical = canonicalize_app_name(app_name)
+        has_local_app = canonical in APP_PROFILES and APP_PROFILES[canonical] is not None
+        
         website_url = website_url_for(app_name)
-        logger.info("Launching app: %s (website_url=%s)", app_name, website_url or "None")
+        logger.info("Launching app: %s (has_local_app=%s, website_url=%s)", app_name, has_local_app, website_url or "None")
 
-        if website_url and getattr(self, "_browser_controller", None) is not None:
+        # Only open browser if no local app is available
+        if website_url and not has_local_app and getattr(self, "_browser_controller", None) is not None:
             # For websites, open URL directly (non-blocking)
             browser_result = self._browser_controller.open_url(website_url)
             # Accept success if browser said success - don't do additional verification
@@ -549,6 +574,12 @@ class ExecutionEngine:
             if success
             else getattr(launch_result, "message", "") or f"Could not launch {label}."
         )
+        
+        if success and canonical in {"whatsapp", "whatsapp business"}:
+            from core import state
+            state.whatsapp_active = True
+            logger.info("WhatsApp opened - marking state.whatsapp_active=True for subsequent message operations")
+        
         action_result = ActionResult(
             success=success,
             action="open_app",
@@ -571,6 +602,49 @@ class ExecutionEngine:
             target=app_name,
             success=action_result.success,
             duration_ms=action_result.duration_ms,
+        )
+        return _result_from_action(action_result)
+
+    def _handle_close_app(self, step: PlanStep) -> Dict[str, Any]:
+        """Close a desktop app by terminating its process."""
+        import psutil
+
+        app_name = (step.target or "").strip()
+        if not app_name:
+            return _fail("No application name provided.", "empty_target")
+
+        action_started = time.perf_counter()
+        app_lower = app_name.lower()
+        killed = False
+
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = str(proc.info.get("name") or "").lower()
+                if app_lower in name or name in app_lower:
+                    proc.kill()
+                    killed = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
+                pass
+
+        from core.app_launcher import app_display_name
+        detail = f"Closed {app_display_name(app_name)}." if killed else f"{app_display_name(app_name)} not found."
+        action_result = ActionResult(
+            success=True,
+            action="close_app",
+            target=app_name,
+            message=detail,
+            data={"killed": killed},
+            error_code=None,
+            verified=True,
+            duration_ms=int(round((time.perf_counter() - action_started) * 1000.0)),
+        )
+        logger.info(
+            "App close attempted",
+            action=action_result.action,
+            target=app_name,
+            success=action_result.success,
+            duration_ms=action_result.duration_ms,
+            killed=killed,
         )
         return _result_from_action(action_result)
 
@@ -803,6 +877,70 @@ class ExecutionEngine:
             "data": {"target_app": "assistant", "input_mode": "text"},
         }
 
+    def _handle_send_message(self, step: PlanStep) -> Dict[str, Any]:
+        """Send a message through the app-specific automation skill."""
+        from core.app_launcher import canonicalize_app_name
+        from core import state
+
+        recipient = (step.target or "").strip()
+        message = (step.params.get("message") or "").strip()
+
+        if not message:
+            return {"success": False, "message": "What would you like to say?", "error": "empty_message", "data": {}}
+
+        if not recipient or recipient == "unknown":
+            return {"success": False, "message": "Who should I send it to?", "error": "missing_recipient", "data": {}}
+
+        target_app = canonicalize_app_name(
+            str(step.params.get("target_app") or step.params.get("app") or "whatsapp").strip() or "whatsapp"
+        )
+        if target_app != "whatsapp":
+            return {
+                "success": False,
+                "message": f"I can't send messages through {target_app} yet.",
+                "error": "unsupported_message_app",
+                "data": {"target_app": target_app, "recipient": recipient, "message": message},
+            }
+
+        wa_skill = getattr(self, "_whatsapp", None)
+        if wa_skill is None:
+            from skills.whatsapp import WhatsAppSkill
+
+            wa_skill = WhatsAppSkill()
+            self._whatsapp = wa_skill
+
+        has_whatsapp_dependency = bool(step.depends_on)
+        reuse_open = has_whatsapp_dependency or getattr(state, "whatsapp_active", False)
+        
+        result = wa_skill.send_message(recipient, message, reuse_open=reuse_open)
+        payload = result.to_dict()
+        data = dict(payload.get("data") or {})
+        data.setdefault("target_app", "whatsapp")
+        data.setdefault("recipient", recipient)
+        data.setdefault("message", message)
+
+        response_text = str(payload.get("response") or payload.get("message") or "")
+        
+        if not payload.get("success"):
+            natural_responses = {
+                "empty_contact": "Who would you like to message?",
+                "empty_message": f"What should I tell {recipient}?",
+                "contact_not_found": f"I couldn't find {recipient} in your contacts.",
+                "message_not_verified": f"Sent to {recipient}, but couldn't confirm delivery.",
+                "send_failed": f"Had trouble sending to {recipient}. Want me to try again?",
+            }
+            error_code = payload.get("error", "")
+            if error_code in natural_responses:
+                response_text = natural_responses[error_code]
+
+        return {
+            "success": bool(payload.get("success")),
+            "message": response_text,
+            "error": str(payload.get("error") or ""),
+            "data": data,
+            "action_result": payload.get("action_result", {}),
+        }
+
     def _handle_file_action(self, step: PlanStep) -> Dict[str, Any]:
         action = str(step.params.get("action", "unknown")).strip().lower()
         filename = (
@@ -1029,14 +1167,40 @@ class ExecutionEngine:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+_FRIENDLY_ERRORS = {
+    "empty_target": "Which app did you want to open?",
+    "empty_query": "What did you want me to look for?",
+    "empty_operation": "What did you want me to do?",
+    "unregistered_app_action": "That app doesn't support that yet.",
+    "empty_click_target": "What did you want me to click on?",
+    "empty_text": "What did you want me to type?",
+    "click_failed": "Couldn't click that. Want me to try again?",
+    "type_failed": "Something went wrong with typing. Try again?",
+    "empty_source": "Which file or folder did you want to use?",
+    "unsupported_file_action": "I'm not sure how to handle that file operation.",
+    "file_action_failed": "Something went wrong with the file. Let me try again?",
+    "not_found": "Couldn't find that. Can you be more specific?",
+    "multiple_matches": "I found a few matches. Which one did you mean?",
+    "timeout": "That took too long. Want me to try again?",
+    "no_result": "Something went wrong on my end. Let's try again?",
+    "unknown_action": "I'm not sure how to handle that yet.",
+    "empty_contact": "Who did you want to message?",
+    "empty_message": "What did you want to say?",
+    "contact_not_found": "Couldn't find that person in your contacts.",
+    "message_not_verified": "Sent the message, but couldn't confirm delivery.",
+    "send_failed": "Had trouble sending. Want me to try again?",
+    "whatsapp_unavailable": "Couldn't open WhatsApp. Is it installed?",
+}
+
 def _fail(message: str, error: str) -> Dict[str, Any]:
-    """Shorthand for returning a failure dict from a handler."""
+    """Shorthand for returning a failure dict from a handler with friendly message."""
+    friendly = _FRIENDLY_ERRORS.get(error, message)
     return _result_from_action(
         ActionResult(
             success=False,
             action="unknown",
             target=None,
-            message=message,
+            message=friendly,
             error_code=error,
             verified=False,
         )
@@ -1246,11 +1410,16 @@ class CommandExecutor:
         payload = dict(entities or {})
 
         if normalized_intent == "open_app":
+            from core.app_launcher import APP_PROFILES
             app_name = str(payload.get("app") or payload.get("requested_app") or "").strip()
             action_started = time.perf_counter()
             logger.info("Executing direct action", action="open_app", target=app_name, command=text)
             canonical_app = canonicalize_app_name(app_name)
-            website_url = website_url_for(app_name)
+            
+            # Check if there's a local app profile - prefer local app over website
+            has_local_app = canonical_app in APP_PROFILES and APP_PROFILES[canonical_app] is not None
+            
+            website_url = website_url_for(app_name) if not has_local_app else ""
             if website_url == "" and self._windows is not None and hasattr(self._windows, "find_windows"):
                 try:
                     existing_windows = []

@@ -156,13 +156,6 @@ active_music_provider: str = ""
 last_track_name: str = ""
 last_artist_name: str = ""
 
-# Phase 20: OCR screen-reading runtime state
-ocr_ready: bool = False
-last_ocr_text: str = ""
-last_ocr_engine: str = ""
-last_screenshot_path: str = ""
-last_text_matches: list = []
-
 # Phase 21: Screen awareness runtime state
 last_awareness_report: dict = {}
 last_desktop_snapshot: dict = {}

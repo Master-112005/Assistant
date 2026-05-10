@@ -82,7 +82,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "close_app_timeout_seconds": 25,
     "window_action_timeout_seconds": 15,
     "browser_command_timeout_seconds": 25,
-    "ocr_timeout_seconds": 15,
     "show_step_progress": True,
     "confirm_dangerous_actions": True,
     "preferred_browser": "chrome",
@@ -113,14 +112,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preferred_music_app": "spotify",
     "auto_open_music_app_if_needed": True,
     "media_key_control_enabled": True,
-    "ocr_enabled": True,
-    "ocr_engine": "easyocr",
-    "ocr_capture_mode": "active_window",
-    "ocr_preprocess": True,
-    "ocr_min_confidence": 0.40,
     "save_debug_screenshots": False,
     "screen_awareness_enabled": True,
-    "awareness_use_ocr": True,
     "awareness_max_items": 5,
     "speak_awareness_summary": False,
     "ignore_background_windows": True,
@@ -574,7 +567,6 @@ def validate_setting(key: str, value: Any, current: dict[str, Any] | None = None
         "close_app_timeout_seconds",
         "window_action_timeout_seconds",
         "browser_command_timeout_seconds",
-        "ocr_timeout_seconds",
     }:
         return _validate_int(key, value, 1, 600)
     if key == "max_auto_retries":

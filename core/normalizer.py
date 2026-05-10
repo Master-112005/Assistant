@@ -58,7 +58,6 @@ _LEADING_FILLERS = (
     "would you ",
     "can u ",
     "could u ",
-    "hey ",
 )
 _SAFE_FILLERS = {"please", "pls", "plz", "just", "kindly"}
 _TRAILING_POLITE_TOKENS = {"please", "now", "thanks"}
@@ -69,42 +68,147 @@ _VERB_CANONICALIZATION: tuple[tuple[str, str], ...] = (
     (r"^(?:hide)\b", "minimize"),
     (r"^(?:enlarge|expand)\b", "maximize"),
     (r"^(?:look up|lookup|google)\b", "search"),
+    # Good morning variations
+    (r"^(?:good\s+morning|good\s+mornin|good\s+mornng)\b", "good morning"),
+    (r"^(?:good\s+evening|good\s+afternoon)\b", "good day"),
 )
 _PHRASE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("current tab", "tab"),
     ("this tab", "tab"),
+    # Word misplacements - reorder common patterns
+    ("app open", "open app"),
+    ("app close", "close app"),
+    ("music play", "play music"),
+    ("video play", "play video"),
+    ("song play", "play song"),
+    ("spotify open", "open spotify"),
+    ("whatsapp open", "open whatsapp"),
+    ("youtube open", "open youtube"),
+    ("chrome open", "open chrome"),
+    ("telegram open", "open telegram"),
+    # More misplacement patterns
+    ("close chrome", "close chrome"),  # Keep as-is but ensures works
+    ("open app", "open app"),  # Already correct
+    # App + action misplacements
+    ("window close", "close window"),
+    ("window minimize", "minimize window"),
+    ("window maximize", "maximize window"),
+    ("tab close", "close tab"),
+    ("tab open", "open tab"),
+    # Media misplacements
+    ("pause music", "pause music"),
+    ("play music", "play music"),
+    ("next song", "next song"),
+    ("previous song", "previous song"),
+    # Handle "the" in different positions
+    ("open the app", "open app"),
+    ("close the app", "close app"),
+    ("minimize the app", "minimize app"),
+    ("maximize the app", "maximize app"),
+    # Communication app misplacements (critical - handle "say X to Y on app")
+    ("say message", "send message"),
+    ("say hi", "send hi"),
+    ("say to", "tell"),
+    ("tell hi", "tell"),
+    # Telegram command patterns
+    ("send telegram", "telegram"),
+    ("message on telegram", "telegram"),
+    # Good morning variations
+    ("good morining", "good morning"),
+    ("good mornin", "good morning"),
+    ("good mornng", "good morning"),
+    ("morning", "good morning"),
+    # More word order issues
+    ("play dulander", "dulander play"),
+    ("play movie", "play movie"),
+    ("play songs", "play songs"),
+    ("open telegram", "open telegram"),
+    # Additional common misplacements
+    ("close the telegram", "close telegram"),
+    ("type message", "send message"),
+    # Contact + platform patterns
+    ("on whatsapp", "whatsapp"),
+    ("on telegram", "telegram"),
+    ("via whatsapp", "whatsapp"),
+    ("via telegram", "telegram"),
 )
 _TOKEN_CORRECTIONS = {
-    "opn": "open",
-    "oen": "open",
-    "opan": "open",
-    "opun": "open",
-    "clos": "close",
-    "clsoe": "close",
-    "serch": "search",
-    "seach": "search",
-    "sarch": "search",
-    "plae": "play",
-    "pley": "play",
-    "ply": "play",
-    "volum": "volume",
-    "vol": "volume",
-    "brighness": "brightness",
-    "brightnes": "brightness",
-    "brightnedd": "brightness",
-    "britness": "brightness",
-    "mut": "mute",
-    "untmute": "unmute",
-    "minimise": "minimize",
-    "maximise": "maximize",
-    # Common typo corrections
-    "massage": "message",
-    "masssage": "message",
-    "mesage": "message",
-    "messge": "message",
-    "messsage": "message",
-    "hemanth": "hemanth",  # Proper name - keep as-is
-    "hemant": "hemanth",  # Common typo for the name
+    # Open command typos
+    "opn": "open", "oen": "open", "opan": "open", "opun": "open",
+    "oepn": "open", "epn": "open", "pen": "open", "poen": "open",
+    # Close command typos
+    "clos": "close", "clsoe": "close", "clsoe": "close", "colse": "close",
+    "cose": "close", "coes": "close", "cloes": "close",
+    # Search command typos
+    "serch": "search", "seach": "search", "sarch": "search",
+    "serch": "search", "sarch": "search", "serach": "search",
+    # Play command typos
+    "plae": "play", "pley": "play", "ply": "play", "paly": "play",
+    "plau": "play", "pla": "play",
+    # Volume typos
+    "volum": "volume", "vol": "volume", "voulme": "volume", "volme": "volume",
+    # Brightness typos
+    "brighness": "brightness", "brightnes": "brightness", "brightnedd": "brightness",
+    "britness": "brightness", "brigness": "brightness", "brigthness": "brightness",
+    # Mute/unmute typos
+    "mut": "mute", "untmute": "unmute", "unmte": "unmute", "umute": "unmute",
+    # Communication/command typos
+    "sy": "say", "sya": "say", "sayy": "say", "sa": "say",
+    "tel": "tell", "telle": "tell", "telt": "tell",
+    "snd": "send", "sned": "send", "sen": "send",
+    "cal": "call", "calle": "call", "calll": "call",
+    "msge": "message", "mssage": "message",
+    # Minimize/maximize
+    "minimise": "minimize", "maximise": "maximize", "minmise": "minimize",
+    "maxmise": "maximize", "minimize": "minimize", "maximize": "maximize",
+    # Message typos
+    "massage": "message", "masssage": "message", "mesage": "message",
+    "messge": "message", "messsage": "message", "mesage": "message",
+    "msg": "message", "mssg": "message",
+    # Name corrections - contact names
+    "hemanth": "hemanth", "hemant": "hemanth", "hemnath": "hemanth",
+    "hemath": "hemanth", "hemanthh": "hemanth",
+    # App name corrections
+    "whatssap": "whatsapp", "watsapp": "whatsapp", "watsap": "whatsapp",
+    "whatsap": "whatsapp", "whatspp": "whatsapp", "wahtsapp": "whatsapp",
+    "yotube": "youtube", "youtub": "youtube", "yutube": "youtube", "utube": "youtube",
+    "yt": "youtube", "ytube": "youtube", "youtubE": "youtube",
+    "spoify": "spotify", "spofiy": "spotify", "spotfy": "spotify", "spotiy": "spotify",
+    "crome": "chrome", "chome": "chrome", "crom": "chrome", "chorm": "chrome",
+    "microdoft": "microsoft", "mircosoft": "microsoft", "microsft": "microsoft",
+    "slack": "slack", "slak": "slack", "slakc": "slack",
+    "vscode": "vs code", "vscod": "vs code", "vsc": "vs code",
+    "code": "vs code",  # Context-dependent, handled specially
+    "discord": "discord", "disord": "discord", "discrod": "discord", "discor": "discord",
+    "telegram": "telegram", "telagram": "telegram", "telegran": "telegram",
+    "telgram": "telegram", "telegrm": "telegram",
+    "teams": "teams", "team": "teams", "tems": "teams",
+    "zoom": "zoom", "zoon": "zoom", "zom": "zoom",
+    "notion": "notion", "notoin": "notion", "notiion": "notion",
+    "figma": "figma", "figam": "figma", "figma": "figma",
+    # Common STT confusions
+    "teh": "the", "hte": "the", "th": "the",
+    "adn": "and", "dna": "and", "nad": "and",
+    "taht": "that", "thta": "that",
+    "fo": "for", "fro": "for", "form": "for",
+    "yuo": "you", "u": "you", "yu": "you", "yo": "you",
+    "ca": "can", "cna": "can", "cn": "can",
+    "whre": "where", "wer": "where", "hwre": "where",
+    "whn": "when", "wn": "when", "hn": "when",
+    # App aliases
+    "insta": "instagram", "ig": "instagram", "instram": "instagram",
+    # Additional common STT typos
+    "dulandar": "dulander", "dulandeer": "dulander", "dulandear": "dulander",
+    "dulandar": "dulander",
+    # Media related
+    "youtubemusic": "youtube music", "ytmusic": "youtube music",
+    # System-related
+    "shutdow": "shutdown", "shutdon": "shutdown", "shutdow": "shutdown",
+    "restrt": "restart", "restart": "restart",
+    # New greeting variations for better detection
+    "hlo": "hello", "hola": "hello", "helloo": "hello",
+    "hai": "hi", "hii": "hi", "hy": "hi",
+    "heya": "hey", "heyy": "hey",
 }
 _KNOWN_VERBS = (
     "back",

@@ -44,7 +44,7 @@ class SkillsManager:
         for skill_name in (
             "ReminderSkill", "FileSkill", "ClipboardSkill", "YouTubeSkill",
             "MusicSkill", "ChromeSkill", "WhatsAppSkill", "SystemSkill",
-            "ClickTextSkill", "AwarenessSkill", "OCRSkill",
+            "ClickTextSkill", "AwarenessSkill",
         ):
             self._skill_factories[skill_name] = None
 
@@ -67,7 +67,6 @@ class SkillsManager:
         from skills.clipboard import ClipboardSkill
         from skills.files import FileSkill
         from skills.music import MusicSkill
-        from skills.ocr import OCRSkill
         from skills.reminders import ReminderSkill
         from skills.system import SystemSkill
         from skills.whatsapp import WhatsAppSkill
@@ -84,7 +83,6 @@ class SkillsManager:
             "SystemSkill": lambda: SystemSkill(),
             "ClickTextSkill": lambda: ClickTextSkill(),
             "AwarenessSkill": lambda: AwarenessSkill(),
-            "OCRSkill": lambda: OCRSkill(),
         }
 
         self._builtins_loaded = True
@@ -142,9 +140,9 @@ class SkillsManager:
                 "youtube": "YouTubeSkill",
                 "spotify": "MusicSkill",
                 "whatsapp": "WhatsAppSkill",
+                "telegram": "WhatsAppSkill",  # Reuse WhatsApp skill for telegram
                 "reminders": "ReminderSkill",
                 "click": "ClickTextSkill",
-                "ocr": "OCRSkill",
                 "file": "FileSkill",
                 "system": "SystemSkill",
                 "browser": "ChromeSkill",  # Only when explicitly routed to browser
